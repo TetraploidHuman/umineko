@@ -11,6 +11,5 @@ fun main() {
     }
 }
 
-
 @Composable
 actual fun determinePlatformType(): PlatformType = PlatformType.DESKTOP
