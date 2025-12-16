@@ -24,6 +24,8 @@ dependencies {
     implementation(libs.exposed.core)
 //    implementation(libs.exposed.jdbc)
     implementation(libs.exposed.r2dbc)
+    implementation(libs.r2dbc.pool)
+    implementation(libs.caffeine)
 
     implementation(libs.h2)
     implementation(libs.r2dbc.h2)
