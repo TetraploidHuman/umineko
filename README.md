@@ -1,92 +1,81 @@
-This is a Kotlin Multiplatform project targeting Android, Web, Desktop (JVM), Server.
+### Umineko介绍
+Umineko是用于实现Umineko无人机中指令下达、数据显示等功能的软件。使用[Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform/#compose-multiplatform)构建的，拥有目前支持并适配Windows、Android、Web平台。
 
-* [/composeApp](./composeApp/src) is for code that will be shared across your Compose Multiplatform applications.
-  It contains several subfolders:
-    - [commonMain](./composeApp/src/commonMain/kotlin) is for code that’s common for all targets.
-    - Other folders are for Kotlin code that will be compiled for only the platform indicated in the folder name.
-      For example, if you want to use Apple’s CoreCrypto for the iOS part of your Kotlin app,
-      the [iosMain](./composeApp/src/iosMain/kotlin) folder would be the right place for such calls.
-      Similarly, if you want to edit the Desktop (JVM) specific part, the [jvmMain](./composeApp/src/jvmMain/kotlin)
-      folder is the appropriate location.
+下面是一些项目运行需要用到的内容：
 
-* [/server](./server/src/main/kotlin) is for the Ktor server application.
+* [/composeApp](./composeApp/src) 用于存放将在你的 Compose 多平台应用程序之间共享的代码。
+  [commonMain](./composeApp/src/commonMain/kotlin) 用于存放所有目标平台通用的代码。其他文件夹用于存放仅针对文件夹名称所指示的平台进行编译的 Kotlin 代码。
 
-* [/shared](./shared/src) is for the code that will be shared between all targets in the project.
-  The most important subfolder is [commonMain](./shared/src/commonMain/kotlin). If preferred, you
-  can add code to the platform-specific folders here too.
+* [/server](./server/src/main/kotlin) 用于 Ktor 服务器应用程序。
 
-### Build and Run Android Application
+* [/shared](./shared/src) 用于将在项目中所有目标平台之间共享的代码。最重要的子文件夹是 [commonMain](./shared/src/commonMain/kotlin)。如果愿意，你也可以在这里添加特定于平台的代码。
 
-To build and run the development version of the Android app, use the run configuration from the run widget
-in your IDE’s toolbar or build it directly from the terminal:
+### 构建和运行 Android 应用程序
 
-- on macOS/Linux
+要构建和运行 Android 应用的开发版本，请使用 IDE 工具栏中运行小部件里的运行配置，或直接在终端中构建：
+
+- 在 macOS/Linux 上
   ```shell
   ./gradlew :composeApp:assembleDebug
   ```
-- on Windows
+- 在 Windows 上
   ```shell
   .\gradlew.bat :composeApp:assembleDebug
   ```
 
-### Build and Run Desktop (JVM) Application
+### 构建和运行桌面（JVM）应用程序
 
-To build and run the development version of the desktop app, use the run configuration from the run widget
-in your IDE’s toolbar or run it directly from the terminal:
+要构建和运行桌面应用的开发版本，请使用 IDE 工具栏中运行小部件里的运行配置，或直接在终端中运行：
 
-- on macOS/Linux
+- 在 macOS/Linux 上
   ```shell
   ./gradlew :composeApp:run
   ```
-- on Windows
+- 在 Windows 上
   ```shell
   .\gradlew.bat :composeApp:run
   ```
 
-### Build and Run Server
+### 构建和运行服务器
 
-To build and run the development version of the server, use the run configuration from the run widget
-in your IDE’s toolbar or run it directly from the terminal:
+要构建和运行服务器的开发版本，请使用 IDE 工具栏中运行小部件里的运行配置，或直接在终端中运行：
 
-- on macOS/Linux
+- 在 macOS/Linux 上
   ```shell
   ./gradlew :server:run
   ```
-- on Windows
+- 在 Windows 上
   ```shell
   .\gradlew.bat :server:run
   ```
 
-### Build and Run Web Application
+### 构建和运行 Web 应用程序
 
-To build and run the development version of the web app, use the run configuration from the run widget
-in your IDE's toolbar or run it directly from the terminal:
+要构建和运行 Web 应用的开发版本，请使用 IDE 工具栏中运行小部件里的运行配置，或直接在终端中运行：
 
-- for the Wasm target (faster, modern browsers):
-    - on macOS/Linux
+- 针对 Wasm 目标（更快，现代浏览器）：
+    - 在 macOS/Linux 上
       ```shell
       ./gradlew :composeApp:wasmJsBrowserDevelopmentRun
       ```
-    - on Windows
+    - 在 Windows 上
       ```shell
       .\gradlew.bat :composeApp:wasmJsBrowserDevelopmentRun
       ```
-- for the JS target (slower, supports older browsers):
-    - on macOS/Linux
+- 针对 JS 目标（较慢，支持旧版浏览器）：
+    - 在 macOS/Linux 上
       ```shell
       ./gradlew :composeApp:jsBrowserDevelopmentRun
       ```
-    - on Windows
+    - 在 Windows 上
       ```shell
       .\gradlew.bat :composeApp:jsBrowserDevelopmentRun
       ```
 
 ---
 
-Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html),
+了解更多关于 [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html),
 [Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform/#compose-multiplatform),
 [Kotlin/Wasm](https://kotl.in/wasm/)…
 
-We would appreciate your feedback on Compose/Web and Kotlin/Wasm in the public Slack
-channel [#compose-web](https://slack-chats.kotlinlang.org/c/compose-web).
-If you face any issues, please report them on [YouTrack](https://youtrack.jetbrains.com/newIssue?project=CMP).
+如果你遇到任何问题，请在 [YouTrack](https://youtrack.jetbrains.com/newIssue?project=CMP)报告。
