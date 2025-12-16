@@ -1,4 +1,4 @@
-//处理UI平台差异
+//处理UI的平台差异
 
 package org.example.umineko
 
