@@ -23,6 +23,7 @@ fun main() = application {
 
 @Composable
 actual fun determinePlatformType(): PlatformType {
+    //桌面端用于测试TABLET版本的UI（主要是我没有平板~）
     return PlatformType.TABLET
 
     var platformType by remember { mutableStateOf(PlatformType.DESKTOP) }
@@ -64,8 +65,8 @@ private fun isWindowsInTabletUiMode(): Boolean {
 
         var line: String?
         while (reader.readLine().also { line = it } != null) {
-            if (line!!.contains("TabletMode") && line!!.contains("REG_DWORD")) {
-                val parts = line!!.split(Regex("\\s+"))
+            if (line!!.contains("TabletMode") && line.contains("REG_DWORD")) {
+                val parts = line.split(Regex("\\s+"))
                 if (parts.isNotEmpty()) {
                     val hexValue = parts.last()
                     val intValue = hexValue.substring(2).toIntOrNull(16)
