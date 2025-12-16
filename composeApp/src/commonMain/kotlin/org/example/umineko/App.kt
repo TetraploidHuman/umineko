@@ -51,7 +51,6 @@ private val animationSpecDp = tween<Dp>(durationMillis = ANIMATION_DURATION_MS)
 private val animationSpecFloat = tween<Float>(durationMillis = ANIMATION_DURATION_MS)
 private val animationSpecFloatQuick = tween<Float>(durationMillis = ANIMATION_DURATION_MS)
 
-
 // --- UI 常量 ---
 private val regularItemHeight = 44.dp
 private val itemSpacing = 2.dp

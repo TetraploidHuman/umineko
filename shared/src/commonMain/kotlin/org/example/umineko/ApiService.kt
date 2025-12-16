@@ -24,7 +24,7 @@ class ApiService {
 
     suspend fun sendMessage(): String {
         return try {
-            client.get("http://$SERVER_IP:$SERVER_PORT/umineko") {
+            client.get("http://$SERVER_IP:$SERVER_PORT/message") {
                 contentType(ContentType.Text.Plain)
             }.body()
         } catch (e: Exception) {
