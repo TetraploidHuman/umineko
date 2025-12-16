@@ -1,5 +1,5 @@
 //处理UI的平台差异
-//邓薇
+//邓薇.
 package org.example.umineko
 
 import androidx.compose.animation.AnimatedVisibility
