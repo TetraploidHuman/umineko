@@ -1,5 +1,5 @@
 ### Umineko介绍
-Umineko是用于实现Umineko无人机中指令下达、数据显示等功能的软件。使用[Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform/#compose-multiplatform)构建的，拥有目前支持并适配Windows、Android、Web平台。
+Umineko是用于实现Umineko无人机中指令下达、数据显示等功能的软件。使用[Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform/#compose-multiplatform)构建的，目前支持并适配Windows、Android、Web平台。
 
 下面是一些项目运行需要用到的内容：
 
