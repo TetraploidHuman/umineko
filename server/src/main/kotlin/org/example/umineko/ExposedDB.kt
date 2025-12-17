@@ -39,24 +39,17 @@ object demoTable : Table("demoTable") {
 }
 
 object demoTableDao {
-    private val messageCache = Caffeine.newBuilder()
-        .maximumSize(1000)
-        .expireAfterWrite(10, TimeUnit.MINUTES)
-        .buildAsync<Long, String>()
+    suspend fun findMessage(id: Long): String = cacheable(name = "demoTable.message", key = id) {
+        suspendTransaction {
+            val row = demoTable.select(demoTable.message).where { demoTable.id eq id }.firstOrNull()
+                ?: return@suspendTransaction "没找到"
 
-    private val cacheLoaderScope = CoroutineScope(Dispatchers.IO)
-
-    suspend fun findMessage(id: Long): String =
-        cacheable(name = "demoTable.message", key = id) {
-            suspendTransaction {
-                val row = demoTable.select(demoTable.message).where { demoTable.id eq id }.firstOrNull()
-                    ?: return@suspendTransaction "没找到"
-
-                row[demoTable.message]
-            }
+            row[demoTable.message]
         }
+    }
 
-    suspend fun updateMessage(id: Long, msg: String) {//此函数在更新数据后使对应 key 的缓存失效
+    //此函数在更新数据后使对应 key 的缓存失效
+    suspend fun updateMessage(id: Long, msg: String) {
         suspendTransaction {
             demoTable.update({ demoTable.id eq id }) {
                 it[message] = msg
@@ -66,6 +59,7 @@ object demoTableDao {
         cacheEvict(name = "demoTable.message", key = id)
     }
 
-    suspend fun forceRefresh(id: Long): String = cachePut(name = "demoTable.message", key = id) { findMessage(id) }//从数据库重新加载并写入缓存
+    //从数据库重新加载并写入缓存
+    suspend fun forceRefresh(id: Long): String = cachePut(name = "demoTable.message", key = id) { findMessage(id) }
 
 }

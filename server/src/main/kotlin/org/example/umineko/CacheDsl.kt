@@ -5,8 +5,6 @@ import com.github.benmanes.caffeine.cache.Caffeine
 import io.ktor.server.application.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executor
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -29,7 +27,6 @@ data class CacheKey private constructor(
 }
 
 object CacheManager {
-
     private val caches = ConcurrentHashMap<String, AsyncCache<Any, Any>>()
 
     private val loaderScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -67,10 +64,6 @@ object CacheManager {
     }
 }
 
-/* =========================
-   Cache API
-   ========================= */
-
 /**
  * Cache-Aside
  * - 同 key 并发请求只会触发一次 loader
@@ -84,9 +77,7 @@ suspend fun <V : Any> cacheable(
 ): V {
     val cache = CacheManager.getCache<Any, V>(name, ttl, maxSize)
 
-    return cache.get(key) { _, _ ->
-        CacheManager.asyncLoad(loader)
-    }.await()
+    return cache.get(key) { _, _ -> CacheManager.asyncLoad(loader) }.await()
 }
 
 /**
