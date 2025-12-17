@@ -20,6 +20,8 @@ suspend fun main() {
 }
 
 fun Application.module() {
+    install(KtorCachePlugin)
+
     install(ContentNegotiation){
         json(
             Json{
