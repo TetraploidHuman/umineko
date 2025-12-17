@@ -7,6 +7,7 @@ import kotlinx.coroutines.future.await
 import kotlinx.coroutines.future.future
 import kotlinx.coroutines.flow.firstOrNull
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabase
 import org.jetbrains.exposed.v1.r2dbc.SchemaUtils
@@ -45,26 +46,26 @@ object demoTableDao {
 
     private val cacheLoaderScope = CoroutineScope(Dispatchers.IO)
 
-    suspend fun findMessage(id: Long): String {
-        return messageCache.get(id) { key, _ ->
+    suspend fun findMessage(id: Long): String =
+        cacheable(name = "demoTable.message", key = id) {
+            suspendTransaction {
+                val row = demoTable.select(demoTable.message).where { demoTable.id eq id }.firstOrNull()
+                    ?: return@suspendTransaction "没找到"
 
-            cacheLoaderScope.future {
-                suspendTransaction {
-                    val row = demoTable.select(demoTable.id, demoTable.message)
-                        .where { demoTable.id eq key }
-                        .firstOrNull()
-                    row?.get(demoTable.message) ?: "没找到"
-                }
-            }
-        }.await()
-    }
-
-    suspend fun updateMessage(id: Long, newMessage: String) {
-        suspendTransaction {
-            demoTable.update({ demoTable.id eq id }) {
-                it[message] = newMessage
+                row[demoTable.message]
             }
         }
-        messageCache.synchronous().invalidate(id)
+
+    suspend fun updateMessage(id: Long, msg: String) {//此函数在更新数据后使对应 key 的缓存失效
+        suspendTransaction {
+            demoTable.update({ demoTable.id eq id }) {
+                it[message] = msg
+            }
+        }
+
+        cacheEvict(name = "demoTable.message", key = id)
     }
+
+    suspend fun forceRefresh(id: Long): String = cachePut(name = "demoTable.message", key = id) { findMessage(id) }//从数据库重新加载并写入缓存
+
 }
