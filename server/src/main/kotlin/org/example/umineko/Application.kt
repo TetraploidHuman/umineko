@@ -177,34 +177,13 @@ fun Route.protectedRoutes() {
     authorize("/admin", Role.ADMIN) {
         get {
             call.respondText("管理员接口")
+            print("激活了管理员URL")
         }
     }
     authorize("/profile",Role.USER, Role.ADMIN) {
         get {
             call.respond("普通用户接口")
-        }
-    }
-}
-val AuthorizePlugin = createRouteScopedPlugin(
-    name = "AuthorizePlugin",
-    createConfiguration = ::AuthorizeConfig
-) {
-
-    val allowedRoles = pluginConfig.allowedRoles
-
-    on(AuthenticationChecked) { call ->
-        val principal = call.principal<JWTPrincipal>() ?: return@on
-
-        val role = runCatching {
-            Role.valueOf(principal.payload.getClaim("role").asString())
-        }.getOrElse {
-            call.respond(HttpStatusCode.Forbidden)
-            return@on
-        }
-
-        if (role !in allowedRoles) {
-            call.respond(HttpStatusCode.Forbidden)
-            return@on
+            print("激活了普通用户URL")
         }
     }
 }
@@ -214,17 +193,30 @@ fun Route.authorize(
     vararg roles: Role,
     build: Route.() -> Unit
 ): Route = authenticate("auth-jwt") {
-        route(path) {
-            install(AuthorizePlugin) {
-                allowedRoles = roles.toSet()
-            }
-            build()
-        }
-    }
 
-class AuthorizeConfig {
-    var allowedRoles: Set<Role> = emptySet()
+    route(path) {
+
+        install(
+            createRouteScopedPlugin(
+                name = "Authorize(${roles.joinToString()})"
+            ) {
+                on(AuthenticationChecked) { call ->
+                    val principal = call.principal<JWTPrincipal>() ?: return@on
+
+                    val role = runCatching {
+                        Role.valueOf(principal.payload.getClaim("role").asString())
+                    }.getOrElse {
+                        call.respond(HttpStatusCode.Forbidden)
+                        return@on
+                    }
+                    if (role !in roles) { call.respond(HttpStatusCode.Forbidden) }
+                }
+            }
+        )
+        build()
+    }
 }
+
 fun Route.logoutRoute() {
     authenticate("auth-jwt") {
         post("/logout") {
@@ -241,7 +233,8 @@ fun Route.logoutRoute() {
                     name = JwtConfig.accessCookie,
                     value = "",
                     path = "/",
-                    maxAge = 0
+                    maxAge = 0,
+                    secure = false
                 )
             )
 
@@ -250,7 +243,8 @@ fun Route.logoutRoute() {
                     name = JwtConfig.refreshCookie,
                     value = "",
                     path = "/",
-                    maxAge = 0
+                    maxAge = 0,
+                    secure = false
                 )
             )
 
