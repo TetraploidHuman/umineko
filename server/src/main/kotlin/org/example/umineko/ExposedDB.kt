@@ -1,5 +1,9 @@
 package org.example.umineko
 
+import org.example.umineko.DB.UserTable
+import org.example.umineko.DB.demoTable
+import org.example.umineko.DB.initTestDB
+import org.example.umineko.DB.initUserDB
 import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabase
 import org.jetbrains.exposed.v1.r2dbc.SchemaUtils
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction

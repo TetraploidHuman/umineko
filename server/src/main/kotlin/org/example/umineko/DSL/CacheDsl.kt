@@ -1,4 +1,4 @@
-package org.example.umineko
+package org.example.umineko.DSL
 
 import com.github.benmanes.caffeine.cache.AsyncCache
 import com.github.benmanes.caffeine.cache.Caffeine
@@ -18,6 +18,7 @@ val KtorCachePlugin = createApplicationPlugin("KtorCachePlugin") {
     }
 }
 
+@ConsistentCopyVisibility
 data class CacheKey private constructor(
     private val parts: List<Any?>
 ) {

@@ -5,7 +5,6 @@ import com.auth0.jwt.algorithms.Algorithm
 import java.util.*
 
 object JwtUtil {
-
     private val algo = Algorithm.HMAC256(JwtConfig.secret)
 
     fun access(uid: Long, role: String, ver: Int): String =
@@ -30,7 +29,7 @@ object JwtConfig {
     const val issuer = "umineko"
     const val audience = "umineko-client"
     const val realm = "umineko"
-    const val secret = "CHANGE_ME"
+    const val secret = "Umineko_JWT_HS256_Secret"
 
     const val accessCookie = "ACCESS_TOKEN"
     const val refreshCookie = "REFRESH_TOKEN"
