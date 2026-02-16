@@ -1,11 +1,18 @@
 //处理UI的平台差异
 package org.example.umineko
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -14,6 +21,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -27,6 +35,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
@@ -41,18 +50,25 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.PI
 
 // --- 动画常量 ---
 private const val ANIMATION_DURATION_MS = 300
-private val animationSpecDp = tween<Dp>(durationMillis = ANIMATION_DURATION_MS)
+private val animationSpecDp = tween<Dp>(
+    durationMillis = ANIMATION_DURATION_MS,
+    easing = FastOutSlowInEasing  // 缓动曲线，开始慢，中间快，结束慢
+)
 private val animationSpecFloat = tween<Float>(durationMillis = ANIMATION_DURATION_MS)
 private val animationSpecFloatQuick = tween<Float>(durationMillis = ANIMATION_DURATION_MS)
 
-// --- UI 常量 ---
-private val regularItemHeight = 44.dp
-private val itemSpacing = 2.dp
+// 移动端UI常量
+private val mobileRegularItemHeight = 48.dp
+private val mobileitemSpacing = 4.dp
 private val commandBarHeight = 50.dp
 
 // 平板UI常量
@@ -99,10 +115,26 @@ fun MainLayout() {
     val apiService = remember { ApiService() }
 
     var username by remember { mutableStateOf("加载中…") }
+    var retryInfo by remember { mutableStateOf("0/3") } // 存储 "1/3"
+
     LaunchedEffect(Unit) {
-        username = apiService.sendMessage()
+        username = apiService.sendMessage(
+            maxRetries = 3,
+            onRetry = { status ->
+                retryInfo = status // 更新重试次数
+            }
+        )
+        // 请求完成后，清空重试信息
+        retryInfo = ""
     }
-    val fullUserProfile = NavItem(username, Icons.Filled.AccountCircle, "user@example.com")
+
+    val fullUserProfile = remember(username, retryInfo) {
+        NavItem(
+            title = username,
+            icon = Icons.Filled.AccountCircle,
+            subtitle = if (retryInfo.isNotEmpty()) "正在重试 ($retryInfo)" else "Server无响应"
+        )
+    }
 
     val navItems = listOf(
         NavItem("个人", fullUserProfile.icon),
@@ -353,13 +385,8 @@ fun NavigationPaneTablet(
                 )
 
                 Box(modifier = Modifier.weight(1f)) {
-                    ContentAreaWithPredictiveGestures(
-                        targetPage = selectedIndex,
-                        onPageChangeByGesture = onItemSelected,
-                        totalItems = items.size
-                    )
+                    ContentArea(pageIndex = selectedIndex)
                 }
-                // *** BottomCommandBarTablet 从这里被移除了 ***
             }
         }
 
@@ -374,134 +401,6 @@ fun NavigationPaneTablet(
             canNavigateBack = selectedIndex > 0,
             canNavigateForward = selectedIndex < items.size - 1
         )
-    }
-}
-
-@Composable
-fun ContentAreaWithPredictiveGestures(
-    targetPage: Int, // 外部传入的目标页面索引
-    onPageChangeByGesture: (Int) -> Unit, // 当手势触发页面改变时，回调此函数更新外部状态
-    totalItems: Int
-) {
-    val coroutineScope = rememberCoroutineScope()
-    val offsetX = remember { Animatable(0f) } // 当前页面的水平偏移量
-
-// 内部状态，代表当前实际稳定显示的页面。只在动画结束后更新。
-    var currentPage by remember { mutableStateOf(targetPage) }
-
-// 标志位，用于区分手势拖动和程序化动画，避免冲突
-    var isDragging by remember { mutableStateOf(false) }
-
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .clipToBounds() // 关键：确保拖出屏幕的内容被裁剪
-            .pointerInput(currentPage, totalItems) {
-                detectHorizontalDragGestures(
-                    onDragStart = {
-                        isDragging = true
-                        coroutineScope.launch { offsetX.stop() }
-                    },
-                    onHorizontalDrag = { change, dragAmount ->
-                        change.consume()
-                        coroutineScope.launch {
-                            offsetX.snapTo(offsetX.value + dragAmount)
-                        }
-                    },
-                    onDragEnd = {
-                        isDragging = false
-                        val widthPx = size.width.toFloat()
-                        val threshold = widthPx / 3
-                        val currentOffset = offsetX.value
-
-                        coroutineScope.launch {
-                            val newTarget = when {
-                                currentOffset < -threshold && currentPage < totalItems - 1 ->
-                                    currentPage + 1
-                                currentOffset > threshold && currentPage > 0 ->
-                                    currentPage - 1
-                                else -> currentPage
-                            }
-
-                            if (newTarget != currentPage) {
-                                onPageChangeByGesture(newTarget)
-                            } else {
-                                offsetX.animateTo(0f, animationSpec = animationSpecFloatQuick)
-                            }
-                        }
-                    },
-                    onDragCancel = {
-                        isDragging = false
-                        coroutineScope.launch {
-                            offsetX.animateTo(0f, animationSpec = animationSpecFloatQuick)
-                        }
-                    }
-                )
-            }
-    ) {
-        val containerWidthPx = constraints.maxWidth.toFloat()
-
-        LaunchedEffect(targetPage) {
-            // 如果正在拖动，直接退出，不干扰手势
-            if (isDragging) return@LaunchedEffect
-
-            // 如果没有切换页面，只需要确保 offsetX 回到 0
-            if (targetPage == currentPage) {
-                if (offsetX.value != 0f) {
-                    offsetX.animateTo(0f, animationSpec = animationSpecFloatQuick)
-                }
-                return@LaunchedEffect
-            }
-
-            // 页面切换动画
-            val isForward = targetPage > currentPage
-            val animationTargetOffset =
-                if (isForward) -containerWidthPx else containerWidthPx
-
-            offsetX.animateTo(animationTargetOffset, animationSpec = animationSpecFloatQuick)
-
-            currentPage = targetPage
-            offsetX.snapTo(0f)
-        }
-
-
-        val prevPage = currentPage - 1
-        if (prevPage >= 0) {
-            key(prevPage) { // 使用 key 确保 Compose 正确识别和管理不同页面的 Composable 实例
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .offset { IntOffset((-containerWidthPx + offsetX.value).roundToInt(), 0) }
-                ) {
-                    ContentArea(pageIndex = prevPage)
-                }
-            }
-        }
-
-// 2. 当前页面 (始终显示 currentPage 的内容)
-        key(currentPage) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-            ) {
-                ContentArea(pageIndex = currentPage)
-            }
-        }
-
-// 3. 下一个页面 (如果存在)
-        val nextPage = currentPage + 1
-        if (nextPage < totalItems) {
-            key(nextPage) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .offset { IntOffset((containerWidthPx + offsetX.value).roundToInt(), 0) }
-                ) {
-                    ContentArea(pageIndex = nextPage)
-                }
-            }
-        }
     }
 }
 
@@ -737,6 +636,15 @@ fun NavigationPaneMobile(
     val requiredBottomPadding = if (isNavOpen) totalBottomPaneHeight else commandBarHeight
     val animatedBottomPadding by animateDpAsState(requiredBottomPadding, animationSpec = animationSpecDp)
 
+    // 定义移动端特有的快捷操作
+    val quickActions = remember {
+        listOf(
+            Triple(Icons.Default.Search, "Search") { println("Search Clicked") },
+            Triple(Icons.Default.Share, "Share") { println("Share Clicked") },
+            Triple(Icons.Default.MoreVert, "More") { println("More Clicked") }
+        )
+    }
+
     Scaffold(
         topBar = {
             MobileTopBar(
@@ -772,19 +680,32 @@ fun NavigationPaneMobile(
                             onContentSizeChanged = { navContentSize = it }
                         )
                     }
-
                 }
             }
         },
         containerColor = MaterialTheme.colorScheme.surface
     ) { paddingValues ->
-        val contentPadding = PaddingValues(
-            top = paddingValues.calculateTopPadding(),
-            start = paddingValues.calculateStartPadding(LayoutDirection.Ltr),
-            end = paddingValues.calculateEndPadding(LayoutDirection.Ltr),
-            bottom = animatedBottomPadding
-        )
-        ContentArea(Modifier.padding(contentPadding), pageIndex = selectedIndex)
+        // 使用 Box 叠加主内容和悬浮按钮
+        Box(modifier = Modifier.fillMaxSize()) {
+            val contentPadding = PaddingValues(
+                top = paddingValues.calculateTopPadding(),
+                start = paddingValues.calculateStartPadding(LayoutDirection.Ltr),
+                end = paddingValues.calculateEndPadding(LayoutDirection.Ltr),
+                bottom = animatedBottomPadding
+            )
+
+            // 1. 主内容区域
+            ContentArea(Modifier.padding(contentPadding), pageIndex = selectedIndex)
+
+            // 2. 行星环绕悬浮按钮
+            // 它的 bottom padding 随底部栏高度动态变化，确保始终在底部栏上方
+            CircularQuickActions(
+                actions = quickActions,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 20.dp, bottom = animatedBottomPadding + 20.dp)
+            )
+        }
     }
 }
 
@@ -793,7 +714,24 @@ fun NavigationPaneMobile(
 private fun MobileTopBar(title: String, userProfile: NavItem, isNavOpen: Boolean) {
     Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
         TopAppBar(
-            title = { Text(title, fontWeight = FontWeight.SemiBold) },
+            title = {
+                AnimatedContent(
+                    targetState = title,
+                    transitionSpec = {
+                        // 定义进入和退出的动画：淡入 + 淡出
+                        (fadeIn(animationSpec = tween(220, delayMillis = 90)) +
+                                scaleIn(initialScale = 1f, animationSpec = tween(220, delayMillis = 90)))
+                            .togetherWith(fadeOut(animationSpec = tween(90)))
+                    },
+                    label = "TitleTransition"
+                ) { targetTitle ->
+                    Text(
+                        text = targetTitle,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                }
+                    },
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = Color.Transparent
             )
@@ -847,7 +785,7 @@ private fun MobileNavContent(
         Box(
             modifier = Modifier
                 .offset(y = indicatorOffsetY)
-                .height(regularItemHeight)
+                .height(mobileRegularItemHeight)
                 .padding(vertical = 5.dp)
         ) {
             Box(
@@ -869,7 +807,7 @@ private fun MobileNavContent(
                     showText = true,
                     onClick = { onItemSelected(index) },
                     modifier = Modifier
-                        .height(regularItemHeight)
+                        .height(mobileRegularItemHeight)
                         .onGloballyPositioned {
                             val newY = with(density) { it.positionInParent().y.toDp() }
                             if (itemPositions[index] != newY) {
@@ -878,7 +816,7 @@ private fun MobileNavContent(
                         }
                 )
                 if (index < items.size - 1) {
-                    Spacer(Modifier.height(itemSpacing))
+                    Spacer(Modifier.height(mobileitemSpacing))
                 }
             }
         }
@@ -990,7 +928,7 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = 8.dp)
     ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
@@ -1000,9 +938,9 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
             items(48) { itemIndex ->
                 Box(
                     modifier = Modifier
-                        .padding(6.dp)
+                        .padding(4.dp)
                         .aspectRatio(1f)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(5.dp))
                         .background(Color(0xFFE8E8E8)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1013,6 +951,78 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun CircularQuickActions(
+    modifier: Modifier = Modifier,
+    // 直接传 Triple：图标、标签、点击事件，不再需要专门定义类
+    actions: List<Triple<ImageVector, String, () -> Unit>>
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+    val radius = 90.dp
+
+    // 核心旋转进度：控制“扇子”展开的弧度
+    val fanRotation by animateFloatAsState(
+        targetValue = if (isExpanded) 120f else 0f,
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        label = "FanRotation"
+    )
+
+    Box(modifier = modifier, contentAlignment = Alignment.BottomEnd) {
+        actions.forEachIndexed { index, (icon, label, onClick) ->
+            // 计算每个按钮在 90 度扇面里的固定偏移
+            val angleStep = 90f / (actions.size - 1).coerceAtLeast(1)
+            val individualOffset = angleStep * index
+
+            // 逻辑：所有按钮初始都在 180 度。
+            // 随着 fanRotation 从 0 变到 90，
+            // 按钮的角度 = 180 + (fanRotation - (90 - individualOffset))
+            // 这样能保证：只有当 fanRotation 足够大时，按钮才从 180 度位置“冒”出来
+            val currentAngle = 150f + (fanRotation - (90f - individualOffset)).coerceAtLeast(0f)
+
+            // 只有当该按钮“冒”出来后，才计算其透明度
+            val isStarted = fanRotation >= (90f - individualOffset)
+            val alpha by animateFloatAsState(
+                targetValue = if (isExpanded && isStarted) 1f else 0f,
+                animationSpec = tween(150)
+            )
+
+            if (alpha > 0f) {
+                val radian = currentAngle * (PI / 180.0)
+                val xOffset = (radius.value * cos(radian)).dp
+                val yOffset = (radius.value * sin(radian)).dp
+
+                FloatingActionButton(
+                    onClick = {
+                        onClick()
+                        isExpanded = false
+                    },
+                    modifier = Modifier
+                        .size(46.dp)
+                        .offset(x = xOffset, y = yOffset)
+                        .alpha(alpha),
+                    shape = CircleShape,
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    elevation = FloatingActionButtonDefaults.elevation(0.dp)
+                ) {
+                    Icon(icon, contentDescription = label, modifier = Modifier.size(22.dp))
+                }
+            }
+        }
+
+        // 主悬浮按钮
+        FloatingActionButton(
+            onClick = { isExpanded = !isExpanded },
+            modifier = Modifier.size(56.dp),
+            shape = CircleShape,
+            containerColor = MaterialTheme.colorScheme.primary,
+            elevation = FloatingActionButtonDefaults.elevation(0.dp)
+        ) {
+            val rotation by animateFloatAsState(if (isExpanded) 45f else 0f)
+            Icon(Icons.Default.Add, null, modifier = Modifier.rotate(rotation))
         }
     }
 }
