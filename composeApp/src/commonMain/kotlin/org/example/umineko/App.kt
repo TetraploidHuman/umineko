@@ -27,6 +27,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -179,7 +180,7 @@ fun MainLayout() {
                 )
                 Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(horizontal = 6.dp)) {
                     TopCommandBarDesktop(title = navItems[selectedIndex].title)
-                    ContentArea(pageIndex = selectedIndex)
+                    ContentAreaMobile(pageIndex = selectedIndex)
                 }
             }
 
@@ -407,7 +408,7 @@ fun NavigationPaneTablet(
                 )
 
                 Box(modifier = Modifier.weight(1f)) {
-                    ContentArea(pageIndex = selectedIndex)
+                    ContentAreaMobile(pageIndex = selectedIndex)
                 }
             }
         }
@@ -757,27 +758,46 @@ private fun MobileTopBar(title: String, userProfile: NavItem, isNavOpen: Boolean
                 containerColor = Color.Transparent
             )
         )
-        AnimatedVisibility(visible = isNavOpen) {
+        AnimatedVisibility(visible = (isNavOpen || title == "个人")) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = userProfile.icon,
                     contentDescription = "User Profile",
-                    modifier = Modifier.size(50.dp)
+                    modifier = Modifier.size(65.dp)
                 )
                 Spacer(Modifier.width(16.dp))
                 Column {
-                    Text(userProfile.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    userProfile.subtitle?.let {
-                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(userProfile.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Row {
+                        userProfile.subtitle?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Surface(//0xFF94DDF1
+                                color = Color(0xFF1FC1EC).copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(3.dp)
+                            ) {
+                                Text(" 开发者 ", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
             }
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        )
+        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -977,32 +997,147 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
 
 @Composable
 fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    val cardGray = Color(0xFFE8E8E8)
+    val accentLight = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
+            .background(surfaceColor)
     ) {
         LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
+            columns = GridCells.Fixed(6),
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 10.dp)
+            contentPadding = PaddingValues(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(48) { itemIndex ->
-                Box(
-                    modifier = Modifier
-                        .padding(4.dp)
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(5.dp))
-                        .background(Color(0xFFE8E8E8)),
-                    contentAlignment = Alignment.Center
-                ) {
+            if (pageIndex == 0) {
+                // 2. 统计数据卡片 (1x1) - 带有小装饰
+                item( span = { GridItemSpan(3) } ){
+                    StatCard("获赞", "1.2k", Icons.Default.Favorite, Color(0xFFFFEBEE))
+                }
+                item (span = { GridItemSpan(3 ) } ){
+                    StatCard("关注", "328", Icons.Default.Person, Color(0xFFE3F2FD))
+                }
+
+                // 3. 进度条卡片 (2x1) - 增加交互感
+                item( span = { GridItemSpan(6) } ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(80.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(cardGray)
+                            .padding(16.dp)
+                    ) {
+                        Column {
+                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                Text("等级进度", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                                Text("75%", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { 0.75f },
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = Color.White.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+                }
+
+                // 4. 功能快捷入口 (1x1) - 混合风格
+                val menuItems = listOf(
+                    Triple("收藏", Icons.Default.Star, Color(0xFFFFF9C4)),
+                    Triple("设置", Icons.Default.Settings, cardGray),
+                    Triple("钱包", Icons.Default.ShoppingCart, cardGray),
+                    Triple("勋章", Icons.Default.Build, Color(0xFFE1F5FE)),
+                    Triple("我将睡觉", Icons.Default.Build, cardGray),
+                    Triple("我将起床", Icons.Default.Build, cardGray),
+                )
+
+                items(menuItems.size, span = { GridItemSpan(2) }) { index ->
+                    val (title, icon, bgColor) = menuItems[index]
+                    Box(
+                        modifier = Modifier
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(bgColor)
+                            .clickable { },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(icon, null, tint = Color.DarkGray, modifier = Modifier.size(28.dp))
+                            Spacer(Modifier.height(8.dp))
+                            Text(title, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+
+                // 5. 最近活动 (2x1) - 模拟列表感
+                item(span = { GridItemSpan(6) }) {
                     Text(
-                        text = "Page $pageIndex\nItem ${itemIndex + 1}",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodySmall
+                        "最近动态",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
                     )
                 }
+
+                items(3,span = { GridItemSpan(3) }) { i ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(cardGray.copy(alpha = 0.5f))
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+                            Spacer(Modifier.width(12.dp))
+                            Text("完成了任务 #00${i+1}", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+
+            } else {
+                // 其他页面的默认网格，稍微优化一下圆角和间距
+                items(48) { itemIndex ->
+                    Box(
+                        modifier = Modifier
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(cardGray),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Item ${itemIndex + 1}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+fun StatCard(label: String, value: String, icon: ImageVector, tint: Color) {
+    Box(
+        modifier = Modifier
+            .aspectRatio(1.5f)
+            .clip(RoundedCornerShape(7.dp))
+            .background(Color(0xFFE8E8E8))
+            .padding(12.dp)
+    ) {
+        Icon(
+            icon, null,
+            modifier = Modifier.align(Alignment.TopEnd).size(30.dp),
+            tint = Color.Gray.copy(alpha = 0.5f)
+        )
+        Column(modifier = Modifier.align(Alignment.BottomStart)) {
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+            Text(label, style = MaterialTheme.typography.titleSmall, color = Color.Gray)
         }
     }
 }
