@@ -8,15 +8,20 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -32,6 +37,7 @@ import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
+import androidx.compose.material3.FloatingActionButtonDefaults.elevation
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,13 +45,23 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -56,6 +72,7 @@ import kotlin.math.roundToInt
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.PI
+import kotlin.math.atan2
 
 // --- 动画常量 ---
 private const val ANIMATION_DURATION_MS = 300
@@ -156,7 +173,7 @@ fun MainLayout() {
                     onMenuToggle = { isNavExpanded = !isNavExpanded },
                     onItemSelected = { selectedIndex = it }
                 )
-                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(horizontal = 6.dp)) {
                     TopCommandBarDesktop(title = navItems[selectedIndex].title)
                     ContentArea(pageIndex = selectedIndex)
                 }
@@ -378,6 +395,7 @@ fun NavigationPaneTablet(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .padding(horizontal = 8.dp)
             ) {
                 // 顶部命令栏
                 TopTitleBarTablet(
@@ -411,7 +429,7 @@ fun TopTitleBarTablet(title: String) {
             .fillMaxWidth()
             .height(56.dp)
             .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -689,13 +707,11 @@ fun NavigationPaneMobile(
         Box(modifier = Modifier.fillMaxSize()) {
             val contentPadding = PaddingValues(
                 top = paddingValues.calculateTopPadding(),
-                start = paddingValues.calculateStartPadding(LayoutDirection.Ltr),
-                end = paddingValues.calculateEndPadding(LayoutDirection.Ltr),
                 bottom = animatedBottomPadding
             )
 
             // 1. 主内容区域
-            ContentArea(Modifier.padding(contentPadding), pageIndex = selectedIndex)
+            ContentAreaMobile(Modifier.padding(contentPadding), pageIndex = selectedIndex)
 
             // 2. 行星环绕悬浮按钮
             // 它的 bottom padding 随底部栏高度动态变化，确保始终在底部栏上方
@@ -714,6 +730,7 @@ fun NavigationPaneMobile(
 private fun MobileTopBar(title: String, userProfile: NavItem, isNavOpen: Boolean) {
     Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
         TopAppBar(
+            modifier = Modifier.height(64.dp),
             title = {
                 AnimatedContent(
                     targetState = title,
@@ -928,12 +945,43 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 8.dp)
     ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(8.dp)
+            contentPadding = PaddingValues(horizontal = 10.dp)
+        ) {
+            items(48) { itemIndex ->
+                Box(
+                    modifier = Modifier
+                        .padding(4.dp)
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(Color(0xFFE8E8E8)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Page $pageIndex\nItem ${itemIndex + 1}",
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
+    ) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 10.dp)
         ) {
             items(48) { itemIndex ->
                 Box(
@@ -958,32 +1006,26 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
 @Composable
 fun CircularQuickActions(
     modifier: Modifier = Modifier,
-    // 直接传 Triple：图标、标签、点击事件，不再需要专门定义类
     actions: List<Triple<ImageVector, String, () -> Unit>>
 ) {
     var isExpanded by remember { mutableStateOf(false) }
+    var draggedActionIndex by remember { mutableStateOf<Int?>(null) }
     val radius = 90.dp
 
-    // 核心旋转进度：控制“扇子”展开的弧度
     val fanRotation by animateFloatAsState(
         targetValue = if (isExpanded) 120f else 0f,
         animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
         label = "FanRotation"
     )
 
+    // 存储每个子按钮的中心位置（相对于 Box）
+    val actionButtonPositions = remember { mutableMapOf<Int, Offset>() }
+
     Box(modifier = modifier, contentAlignment = Alignment.BottomEnd) {
         actions.forEachIndexed { index, (icon, label, onClick) ->
-            // 计算每个按钮在 90 度扇面里的固定偏移
             val angleStep = 90f / (actions.size - 1).coerceAtLeast(1)
             val individualOffset = angleStep * index
-
-            // 逻辑：所有按钮初始都在 180 度。
-            // 随着 fanRotation 从 0 变到 90，
-            // 按钮的角度 = 180 + (fanRotation - (90 - individualOffset))
-            // 这样能保证：只有当 fanRotation 足够大时，按钮才从 180 度位置“冒”出来
             val currentAngle = 150f + (fanRotation - (90f - individualOffset)).coerceAtLeast(0f)
-
-            // 只有当该按钮“冒”出来后，才计算其透明度
             val isStarted = fanRotation >= (90f - individualOffset)
             val alpha by animateFloatAsState(
                 targetValue = if (isExpanded && isStarted) 1f else 0f,
@@ -995,15 +1037,23 @@ fun CircularQuickActions(
                 val xOffset = (radius.value * cos(radian)).dp
                 val yOffset = (radius.value * sin(radian)).dp
 
+                // 记录按钮位置用于后续检测
+                val buttonSize = 46.dp
+                val buttonRadius = buttonSize / 2
+
                 FloatingActionButton(
                     onClick = {
                         onClick()
                         isExpanded = false
                     },
                     modifier = Modifier
-                        .size(46.dp)
+                        .size(buttonSize)
                         .offset(x = xOffset, y = yOffset)
-                        .alpha(alpha),
+                        .alpha(alpha)
+                        .onGloballyPositioned { coordinates ->
+                            // 获取按钮中心位置
+                            actionButtonPositions[index] = coordinates.boundsInParent().center
+                        },
                     shape = CircleShape,
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     elevation = FloatingActionButtonDefaults.elevation(0.dp)
@@ -1013,16 +1063,88 @@ fun CircularQuickActions(
             }
         }
 
-        // 主悬浮按钮
-        FloatingActionButton(
-            onClick = { isExpanded = !isExpanded },
-            modifier = Modifier.size(56.dp),
-            shape = CircleShape,
-            containerColor = MaterialTheme.colorScheme.primary,
-            elevation = FloatingActionButtonDefaults.elevation(0.dp)
+        val haptic = LocalHapticFeedback.current
+        val interactionSource = remember { MutableInteractionSource() }
+        val isPressed by interactionSource.collectIsPressedAsState()
+
+        // 主悬浮按钮的位置和大小
+        val mainButtonSize = 56.dp
+        var mainButtonCenter by remember { mutableStateOf(Offset.Zero) }
+
+        LaunchedEffect(isPressed) {
+            if (isPressed) {
+                haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                isExpanded = !isExpanded
+                draggedActionIndex = null
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .pointerInput(isExpanded, actionButtonPositions) {
+                    if (!isExpanded) return@pointerInput
+
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Main)
+                            val position = event.changes.first().position
+
+                            // 检测拖动到哪个子按钮
+                            var hoveredIndex: Int? = null
+                            for ((index, buttonCenter) in actionButtonPositions) {
+                                val distance = (position - buttonCenter).getDistance()
+                                // 按钮的点击区域半径（稍大于实际按钮大小以改善体验）
+                                val hitRadius = 30.dp.toPx()
+
+                                if (distance <= hitRadius) {
+                                    hoveredIndex = index
+                                    break
+                                }
+                            }
+
+                            // 更新高亮状态
+                            if (hoveredIndex != draggedActionIndex) {
+                                draggedActionIndex = hoveredIndex
+                                if (hoveredIndex != null) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                            }
+
+                            // 监听手指抬起
+                            if (event.changes.any { it.changedToUp() }) {
+                                // 如果在某个按钮上抬起，触发该按钮的点击事件
+                                draggedActionIndex?.let { index ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    actions[index].third.invoke()
+                                    isExpanded = false
+                                }
+                                draggedActionIndex = null
+                                break
+                            }
+                        }
+                    }
+                }
         ) {
-            val rotation by animateFloatAsState(if (isExpanded) 45f else 0f)
-            Icon(Icons.Default.Add, null, modifier = Modifier.rotate(rotation))
+            FloatingActionButton(
+                onClick = {},
+                interactionSource = interactionSource,
+                modifier = Modifier
+                    .size(mainButtonSize)
+                    .onGloballyPositioned { coordinates ->
+                        mainButtonCenter = coordinates.boundsInParent().center
+                    },
+                shape = CircleShape,
+                containerColor = MaterialTheme.colorScheme.primary,
+                elevation = FloatingActionButtonDefaults.elevation(
+                    defaultElevation = 0.dp,
+                    pressedElevation = 0.dp,
+                    focusedElevation = 0.dp,
+                    hoveredElevation = 0.dp
+                )
+            ) {
+                val rotation by animateFloatAsState(if (isExpanded) 45f else 0f)
+                Icon(Icons.Default.Add, null, modifier = Modifier.rotate(rotation))
+            }
         }
     }
 }
