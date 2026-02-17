@@ -3,9 +3,11 @@ package org.example.umineko
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -18,6 +20,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -51,6 +54,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -1010,16 +1014,15 @@ fun CircularQuickActions(
 ) {
     var isExpanded by remember { mutableStateOf(false) }
     var draggedActionIndex by remember { mutableStateOf<Int?>(null) }
-    val radius = 90.dp
+    val radius = 100.dp
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val actionButtonPositions = remember { mutableMapOf<Int, Offset>() }
 
     val fanRotation by animateFloatAsState(
         targetValue = if (isExpanded) 120f else 0f,
-        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
-        label = "FanRotation"
+        animationSpec = spring(Spring.DampingRatioLowBouncy, Spring.StiffnessLow)
     )
-
-    // 存储每个子按钮的中心位置（相对于 Box）
-    val actionButtonPositions = remember { mutableMapOf<Int, Offset>() }
 
     Box(modifier = modifier, contentAlignment = Alignment.BottomEnd) {
         actions.forEachIndexed { index, (icon, label, onClick) ->
@@ -1027,124 +1030,129 @@ fun CircularQuickActions(
             val individualOffset = angleStep * index
             val currentAngle = 150f + (fanRotation - (90f - individualOffset)).coerceAtLeast(0f)
             val isStarted = fanRotation >= (90f - individualOffset)
-            val alpha by animateFloatAsState(
-                targetValue = if (isExpanded && isStarted) 1f else 0f,
-                animationSpec = tween(150)
+
+            val alpha by animateFloatAsState(targetValue = if (isExpanded && isStarted) 1f else 0f)
+            val scale by animateFloatAsState(targetValue = if (draggedActionIndex == index) 1.25f else 1f)
+
+            val containerColor by animateColorAsState(
+                targetValue = if (draggedActionIndex == index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
+            )
+            val iconColor by animateColorAsState(
+                targetValue = if (draggedActionIndex == index) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
             )
 
-            if (alpha > 0f) {
+            if (alpha > 0.01f) {
                 val radian = currentAngle * (PI / 180.0)
-                val xOffset = (radius.value * cos(radian)).dp
-                val yOffset = (radius.value * sin(radian)).dp
+                // 计算像素偏移
+                val pxOffset = with(LocalDensity.current) { radius.toPx() }
+                val x = (pxOffset * cos(radian)).toFloat()
+                val y = (pxOffset * sin(radian)).toFloat()
 
-                // 记录按钮位置用于后续检测
-                val buttonSize = 46.dp
-                val buttonRadius = buttonSize / 2
-
-                FloatingActionButton(
-                    onClick = {
-                        onClick()
-                        isExpanded = false
-                    },
+                Box(
                     modifier = Modifier
-                        .size(buttonSize)
-                        .offset(x = xOffset, y = yOffset)
-                        .alpha(alpha)
+                        .size(48.dp)
+                        // 【关键改动 1】：使用 graphicsLayer 处理位移和裁剪
+                        // 这比 offset + clip 更稳定，能防止动画过程中的“变方”
+                        .graphicsLayer {
+                            translationX = x
+                            translationY = y
+                            this.alpha = alpha
+                            scaleX = scale
+                            scaleY = scale
+                            clip = true
+                            shape = CircleShape
+                        }
+                        .background(containerColor)
                         .onGloballyPositioned { coordinates ->
-                            // 获取按钮中心位置
-                            actionButtonPositions[index] = coordinates.boundsInParent().center
+                            val centerOffset = with(density) { 24.dp.toPx() }
+                            actionButtonPositions[index] = coordinates.positionInParent() + Offset(centerOffset, centerOffset)
                         },
-                    shape = CircleShape,
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    elevation = FloatingActionButtonDefaults.elevation(0.dp)
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(icon, contentDescription = label, modifier = Modifier.size(22.dp))
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = label,
+                        modifier = Modifier.size(24.dp),
+                        tint = iconColor
+                    )
                 }
             }
         }
 
-        val haptic = LocalHapticFeedback.current
-        val interactionSource = remember { MutableInteractionSource() }
-        val isPressed by interactionSource.collectIsPressedAsState()
-
-        // 主悬浮按钮的位置和大小
-        val mainButtonSize = 56.dp
-        var mainButtonCenter by remember { mutableStateOf(Offset.Zero) }
-
-        LaunchedEffect(isPressed) {
-            if (isPressed) {
-                haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
-                isExpanded = !isExpanded
-                draggedActionIndex = null
-            }
-        }
-
-        Column(
+        // --- 主按钮 ---
+        Box(
             modifier = Modifier
-                .pointerInput(isExpanded, actionButtonPositions) {
-                    if (!isExpanded) return@pointerInput
-
+                .size(56.dp)
+                .graphicsLayer {
+                    clip = true
+                    shape = CircleShape
+                }
+                .background(MaterialTheme.colorScheme.primary)
+                .pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Main)
-                            val position = event.changes.first().position
+                            val change = event.changes.first()
 
-                            // 检测拖动到哪个子按钮
-                            var hoveredIndex: Int? = null
-                            for ((index, buttonCenter) in actionButtonPositions) {
-                                val distance = (position - buttonCenter).getDistance()
-                                // 按钮的点击区域半径（稍大于实际按钮大小以改善体验）
-                                val hitRadius = 30.dp.toPx()
-
-                                if (distance <= hitRadius) {
-                                    hoveredIndex = index
-                                    break
+                            if (change.pressed) {
+                                // 只要按下，立即展开
+                                if (!isExpanded) {
+                                    isExpanded = true
+                                    haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                                 }
+
+                                // 实时检测手指位置（拖拽过程中）
+                                val position = change.position
+                                var hoveredIndex: Int? = null
+
+                                // 遍历所有子按钮的位置快照
+                                for ((idx, center) in actionButtonPositions) {
+                                    // 判定半径设为 30dp 左右比较舒适
+                                    val distance = (position - center).getDistance()
+                                    if (distance <= with(density) { 30.dp.toPx() }) {
+                                        hoveredIndex = idx
+                                        break
+                                    }
+                                }
+
+                                if (hoveredIndex != draggedActionIndex) {
+                                    draggedActionIndex = hoveredIndex
+                                    if (hoveredIndex != null) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                }
+
+                                // 消耗掉事件，防止滚动父容器
+                                change.consume()
                             }
 
-                            // 更新高亮状态
-                            if (hoveredIndex != draggedActionIndex) {
-                                draggedActionIndex = hoveredIndex
-                                if (hoveredIndex != null) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                }
-                            }
-
-                            // 监听手指抬起
-                            if (event.changes.any { it.changedToUp() }) {
-                                // 如果在某个按钮上抬起，触发该按钮的点击事件
-                                draggedActionIndex?.let { index ->
+                            // 只要松手，立即执行逻辑并收回
+                            if (change.changedToUp()) {
+                                if (draggedActionIndex != null) {
+                                    // 如果松手时悬停在某个子按钮上，触发它
+                                    actions[draggedActionIndex!!].third.invoke()
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    actions[index].third.invoke()
-                                    isExpanded = false
                                 }
+
+                                // 无论如何都收回菜单
+                                isExpanded = false
                                 draggedActionIndex = null
-                                break
                             }
                         }
                     }
                 }
+            ,
+            contentAlignment = Alignment.Center
         ) {
-            FloatingActionButton(
-                onClick = {},
-                interactionSource = interactionSource,
-                modifier = Modifier
-                    .size(mainButtonSize)
-                    .onGloballyPositioned { coordinates ->
-                        mainButtonCenter = coordinates.boundsInParent().center
-                    },
-                shape = CircleShape,
-                containerColor = MaterialTheme.colorScheme.primary,
-                elevation = FloatingActionButtonDefaults.elevation(
-                    defaultElevation = 0.dp,
-                    pressedElevation = 0.dp,
-                    focusedElevation = 0.dp,
-                    hoveredElevation = 0.dp
-                )
-            ) {
-                val rotation by animateFloatAsState(if (isExpanded) 45f else 0f)
-                Icon(Icons.Default.Add, null, modifier = Modifier.rotate(rotation))
-            }
+            val rotation by animateFloatAsState(targetValue = if (isExpanded) 45f else 0f)
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.rotate(rotation)
+            )
         }
     }
 }
+
+
