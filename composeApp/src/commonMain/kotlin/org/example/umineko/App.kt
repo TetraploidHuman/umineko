@@ -1025,7 +1025,6 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
     var hoveredWaypointIndex by remember { mutableStateOf<Int?>(null) }
     // 控制内部文字显示的内容，初始为 null 确保每次重新进入时不产生滚动动画
     var displayIndex by remember { mutableStateOf<Int?>(null) }
-
     // 当用户松开手指，Card 消失后的 300ms（动画结束）清空 displayIndex
     LaunchedEffect(hoveredWaypointIndex) {
         if (hoveredWaypointIndex == null) {
@@ -1164,10 +1163,10 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                     }
                     item(span = { GridItemSpan(3) }) {
                         StatCard(
-                            "最低续航",
-                            "12h 32min",
-                            Icons.Default.Person,
-                            Color(0xFFE3F2FD)
+                            label = "最低续航",
+                            value = "12h 32min",
+                            icon = Icons.Default.Person,
+                            tint = Color(0xFFE3F2FD)
                         )
                     }
 
@@ -1346,7 +1345,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
 
                             Box(
                                 modifier = Modifier
-                                    .weight(2.5f).fillMaxHeight().clip(RoundedCornerShape(7.dp))
+                                    .weight(2.6f).fillMaxHeight().clip(RoundedCornerShape(7.dp))
                                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                                     .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(7.dp))
                                     .padding(8.dp)
@@ -1879,12 +1878,17 @@ fun TimelineItem(
 
 
 @Composable
-fun StatCard(label: String, value: String, icon: ImageVector, tint: Color) {
+fun StatCard(label: String, value: String, icon: ImageVector, tint: Color, onClick: (() -> Unit)? = null) {
     Box(
         modifier = Modifier
             .aspectRatio(1.5f)
             .clip(RoundedCornerShape(7.dp))
             .background(Color(0xFFE8E8E8))
+            .then(
+                if (onClick != null)
+                    Modifier.clickable { onClick() }
+                else Modifier
+            )
             .padding(12.dp)
     ) {
         Icon(
