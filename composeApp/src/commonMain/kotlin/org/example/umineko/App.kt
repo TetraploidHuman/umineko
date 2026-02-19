@@ -1029,7 +1029,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
     // 当用户松开手指，Card 消失后的 300ms（动画结束）清空 displayIndex
     LaunchedEffect(hoveredWaypointIndex) {
         if (hoveredWaypointIndex == null) {
-            kotlinx.coroutines.delay(300)
+            delay(300)
             displayIndex = null
         }
     }
@@ -1156,16 +1156,16 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                     // 1. 统计数据卡片
                     item(span = { GridItemSpan(3) }) {
                         StatCard(
-                            "获赞",
-                            "1.2k",
+                            "正在航行",
+                            "05 / 16",
                             Icons.Default.Favorite,
                             Color(0xFFFFEBEE)
                         )
                     }
                     item(span = { GridItemSpan(3) }) {
                         StatCard(
-                            "关注",
-                            "328",
+                            "最低续航",
+                            "12h 32min",
                             Icons.Default.Person,
                             Color(0xFFE3F2FD)
                         )
@@ -1174,7 +1174,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                     // 2. 进度条卡片
                     item(span = { GridItemSpan(6) }) {
                         Box(
-                            modifier = Modifier.fillMaxWidth().height(80.dp).clip(RoundedCornerShape(7.dp))
+                            modifier = Modifier.fillMaxWidth().height(78.dp).clip(RoundedCornerShape(7.dp))
                                 .background(cardGray).padding(16.dp)
                         ) {
                             Column {
@@ -1346,106 +1346,14 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
 
                             Box(
                                 modifier = Modifier
-                                    .weight(2.4f).fillMaxHeight().clip(RoundedCornerShape(7.dp))
+                                    .weight(2.5f).fillMaxHeight().clip(RoundedCornerShape(7.dp))
                                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                                     .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(7.dp))
                                     .padding(8.dp)
 
                             ) {
                                 Row(modifier = Modifier.fillMaxSize()) {
-                                    Column(
-                                        modifier = Modifier.fillMaxHeight()
-                                            .padding(top = 6.dp, bottom = 6.dp, start = 12.dp).pointerInput(Unit) {
-                                            awaitPointerEventScope {
-                                                while (true) {
-                                                    val event = awaitPointerEvent()
-                                                    val pointer = event.changes.first()
-                                                    val pos = pointer.position
-                                                    val isInNodeZone = pos.x < 45.dp.toPx()
 
-                                                    if (pointer.pressed && isInNodeZone) {
-                                                        pointer.consume()
-                                                        val closest =
-                                                            nodePositions.minByOrNull { kotlin.math.abs(it.value - pos.y) }
-                                                        if (closest != null && kotlin.math.abs(closest.value - pos.y) < 60f) {
-                                                            // 先设置索引，再设置可见性，确保 Card 弹出时内容已就绪
-                                                            if (displayIndex != closest.key) {
-                                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                            }
-                                                            displayIndex = closest.key
-                                                            hoveredWaypointIndex = closest.key
-
-                                                        }
-                                                    } else {
-                                                        if (hoveredWaypointIndex != null) {
-                                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                        }
-                                                        hoveredWaypointIndex = null
-                                                        pointer.consume()
-                                                        // 注意：此处不立即清空 displayIndex，由 LaunchedEffect 处理
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        // 计算各段距离权重 (增加平滑动画)
-                                        val wNext2 by animateFloatAsState(
-                                            targetValue = ((allWaypoints.getOrNull(currentIndex + 1)?.distanceToNext
-                                                ?: 100f) / 50f).coerceIn(0.5f, 5f),
-                                            animationSpec = tween(450) // 这里的时长决定了节点挪动的速度
-                                        )
-                                        val wNext1 by animateFloatAsState(
-                                            targetValue = ((allWaypoints.getOrNull(currentIndex)?.distanceToNext
-                                                ?: 100f) / 50f).coerceIn(0.5f, 5f),
-                                            animationSpec = tween(450)
-                                        )
-                                        val wPast by animateFloatAsState(
-                                            targetValue = ((allWaypoints.getOrNull(currentIndex - 1)?.distanceToNext
-                                                ?: 50f) / 50f).coerceIn(0.5f, 2f),
-                                            animationSpec = tween(450)
-                                        )
-
-                                        Box(
-                                            modifier = Modifier.size(6.dp)
-                                                .border(1.dp, Color.Gray.copy(alpha = 0.5f), CircleShape)
-                                                .onGloballyPositioned {
-                                                    nodePositions[currentIndex + 2] = it.positionInParent().y
-                                                })
-                                        Box(
-                                            modifier = Modifier.width(1.dp).weight(wNext2)
-                                                .background(Color.Gray.copy(alpha = 0.3f))
-                                        )
-                                        Box(
-                                            modifier = Modifier.size(8.dp).border(1.dp, Color.Gray, CircleShape)
-                                                .background(MaterialTheme.colorScheme.surface, CircleShape)
-                                                .onGloballyPositioned {
-                                                    nodePositions[currentIndex + 1] = it.positionInParent().y
-                                                })
-                                        Box(
-                                            modifier = Modifier.width(1.dp).weight(wNext1)
-                                                .background(Color.Gray.copy(alpha = 0.3f))
-                                        )
-                                        Box(
-                                            modifier = Modifier.size(16.dp)
-                                                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                                                .padding(3.dp)
-                                                .background(MaterialTheme.colorScheme.primary, CircleShape)
-                                                .onGloballyPositioned {
-                                                    nodePositions[currentIndex] = it.positionInParent().y
-                                                })
-                                        Box(
-                                            modifier = Modifier.width(2.dp).weight(wPast)
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
-                                        )
-                                        Box(
-                                            modifier = Modifier.size(6.dp).background(
-                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                                CircleShape
-                                            ).onGloballyPositioned {
-                                                nodePositions[currentIndex - 1] = it.positionInParent().y
-                                            })
-                                    }
 
                                     Column(
                                         modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 4.dp),
@@ -1453,7 +1361,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
                                         Column(
-                                            horizontalAlignment = Alignment.End,
+                                            horizontalAlignment = Alignment.Start,
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
                                             Text(
@@ -1463,7 +1371,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                                 color = MaterialTheme.colorScheme.primary
                                             )
                                             Text(
-                                                text = "WP-$currentIndex",
+                                                text = "WP-${currentIndex.toString().padStart(2,'0')}",
                                                 style = MaterialTheme.typography.titleLarge,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = MaterialTheme.colorScheme.onSurface
@@ -1473,7 +1381,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                         // 距离显示
                                         Box(
                                             contentAlignment = Alignment.Center,
-                                            modifier = Modifier.size(70.dp) // 稍微加大一点容器，防止数字大时显得拥挤
+                                            modifier = Modifier.size(75.dp) // 稍微加大一点容器，防止数字大时显得拥挤
                                         ) {
                                             val currentDistance =
                                                 allWaypoints.getOrNull(currentIndex)?.distanceToNext ?: 0f
@@ -1481,7 +1389,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                             CircularProgressIndicator(
                                                 progress = { 0.7f },
                                                 modifier = Modifier.fillMaxSize(),
-                                                strokeWidth = 3.dp,
+                                                strokeWidth = 5.dp,
                                                 trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                                             )
 
@@ -1514,15 +1422,108 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                             },
                                             modifier = Modifier
-                                                .align(Alignment.End) // 如果在 Column 里，靠右对齐
+                                                .align(Alignment.Start) // 如果在 Column 里，靠右对齐
                                                 .size(32.dp)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                                 contentDescription = "Next",
-                                                modifier = Modifier.size(24.dp),
+                                                modifier = Modifier.size(26.dp),
                                             )
                                         }
+                                    }
+                                    Column(
+                                        modifier = Modifier.fillMaxHeight()
+                                            .padding(top = 6.dp, bottom = 6.dp, start = 8.dp, end = 8.dp).pointerInput(Unit) {
+                                                awaitPointerEventScope {
+                                                    while (true) {
+                                                        val event = awaitPointerEvent()
+                                                        val pointer = event.changes.first()
+                                                        val pos = pointer.position
+                                                        val isInNodeZone = pos.x < 45.dp.toPx()
+
+                                                        if (pointer.pressed && isInNodeZone) {
+                                                            pointer.consume()
+                                                            val closest =
+                                                                nodePositions.minByOrNull { kotlin.math.abs(it.value - pos.y) }
+                                                            if (closest != null && kotlin.math.abs(closest.value - pos.y) < 60f) {
+                                                                // 先设置索引，再设置可见性，确保 Card 弹出时内容已就绪
+                                                                if (displayIndex != closest.key) {
+                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                }
+                                                                displayIndex = closest.key
+                                                                hoveredWaypointIndex = closest.key
+
+                                                            }
+                                                        } else {
+                                                            if (hoveredWaypointIndex != null) {
+                                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                            }
+                                                            hoveredWaypointIndex = null
+                                                            pointer.consume()
+                                                            // 注意：此处不立即清空 displayIndex，由 LaunchedEffect 处理
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        // 计算各段距离权重 (增加平滑动画)
+                                        val wNext2 by animateFloatAsState(
+                                            targetValue = ((allWaypoints.getOrNull(currentIndex + 1)?.distanceToNext
+                                                ?: 100f) / 50f).coerceIn(0.5f, 5f),
+                                            animationSpec = tween(450) // 这里的时长决定了节点挪动的速度
+                                        )
+                                        val wNext1 by animateFloatAsState(
+                                            targetValue = ((allWaypoints.getOrNull(currentIndex)?.distanceToNext
+                                                ?: 100f) / 50f).coerceIn(0.5f, 5f),
+                                            animationSpec = tween(450)
+                                        )
+                                        val wPast by animateFloatAsState(
+                                            targetValue = ((allWaypoints.getOrNull(currentIndex - 1)?.distanceToNext
+                                                ?: 50f) / 50f).coerceIn(0.5f, 2f),
+                                            animationSpec = tween(450)
+                                        )
+
+                                        Box(
+                                            modifier = Modifier.size(8.dp)
+                                                .border(1.dp, Color.Gray.copy(alpha = 0.5f), CircleShape)
+                                                .onGloballyPositioned {
+                                                    nodePositions[currentIndex + 2] = it.positionInParent().y
+                                                })
+                                        Box(
+                                            modifier = Modifier.width(3.dp).weight(wNext2)
+                                                .background(Color.Gray.copy(alpha = 0.3f))
+                                        )
+                                        Box(
+                                            modifier = Modifier.size(10.dp).border(1.dp, Color.Gray, CircleShape)
+                                                .background(MaterialTheme.colorScheme.surface, CircleShape)
+                                                .onGloballyPositioned {
+                                                    nodePositions[currentIndex + 1] = it.positionInParent().y
+                                                })
+                                        Box(
+                                            modifier = Modifier.width(3.dp).weight(wNext1)
+                                                .background(Color.Gray.copy(alpha = 0.3f))
+                                        )
+                                        Box(
+                                            modifier = Modifier.size(18.dp)
+                                                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                                .padding(3.dp)
+                                                .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                                .onGloballyPositioned {
+                                                    nodePositions[currentIndex] = it.positionInParent().y
+                                                })
+                                        Box(
+                                            modifier = Modifier.width(4.dp).weight(wPast)
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                                        )
+                                        Box(
+                                            modifier = Modifier.size(8.dp).background(
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                                CircleShape
+                                            ).onGloballyPositioned {
+                                                nodePositions[currentIndex - 1] = it.positionInParent().y
+                                            })
                                     }
                                 }
                             }
