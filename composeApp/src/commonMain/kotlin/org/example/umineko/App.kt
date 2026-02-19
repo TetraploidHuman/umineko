@@ -14,9 +14,11 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -29,18 +31,23 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -84,13 +91,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import kotlin.math.roundToInt
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.PI
 import kotlin.math.atan2
+import kotlin.time.Clock
+import kotlin.time.Instant
+import kotlin.time.TimeSource
 
 // --- 动画常量 ---
 private const val ANIMATION_DURATION_MS = 300
@@ -723,16 +736,9 @@ fun NavigationPaneMobile(
     ) { paddingValues ->
         // 使用 Box 叠加主内容和悬浮按钮
         Box(modifier = Modifier.fillMaxSize()) {
-            val contentPadding = PaddingValues(
-                top = paddingValues.calculateTopPadding(),
-                bottom = animatedBottomPadding
-            )
+            ContentAreaMobile(Modifier.padding(top = paddingValues.calculateTopPadding()), pageIndex = selectedIndex)
 
-            // 1. 主内容区域
-            ContentAreaMobile(Modifier.padding(contentPadding), pageIndex = selectedIndex)
-
-            // 2. 行星环绕悬浮按钮
-            // 它的 bottom padding 随底部栏高度动态变化，确保始终在底部栏上方
+            // bottom padding 随底部栏高度动态变化，确保始终在底部栏上方
             CircularQuickActions(
                 actions = quickActions,
                 modifier = Modifier
@@ -1013,6 +1019,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
     val surfaceColor = MaterialTheme.colorScheme.surface
     val cardGray = Color(0xFFE8E8E8)
     val haptic = LocalHapticFeedback.current
+    var isTimelineActive by remember { mutableStateOf(false) }
     // --- 状态追踪 ---
     // 控制外部 Card 的可见性
     var hoveredWaypointIndex by remember { mutableStateOf<Int?>(null) }
@@ -1027,78 +1034,266 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
         }
     }
 
+    val activities = remember {
+        mutableStateListOf(
+            ActivityLog("任务已完成", ActivityType.TASK_COMPLETED,Clock.System.now().toEpochMilliseconds()),
+            ActivityLog("抵达 WP-1", ActivityType.WAYPOINT_REACHED, Clock.System.now().toEpochMilliseconds() + 1),
+            ActivityLog("获得勋章", ActivityType.MEDAL_EARNED, Clock.System.now().toEpochMilliseconds() + 2),
+            ActivityLog("系统更新", ActivityType.SYSTEM_UPDATE,Clock.System.now().toEpochMilliseconds() + 3),
+            ActivityLog("任务结束", ActivityType.TASK_END, Clock.System.now().toEpochMilliseconds() + 4),
+            ActivityLog("我将下班", ActivityType.TASK_END, Clock.System.now().toEpochMilliseconds() + 5),
+            ActivityLog("我将洗澡", ActivityType.LIFE,Clock.System.now().toEpochMilliseconds() + 6),
+            ActivityLog("我将睡觉", ActivityType.LIFE, Clock.System.now().toEpochMilliseconds() + 7),
+        )
+    }
+
+    val timelineState = rememberLazyListState()
+    val density = LocalDensity.current
+    val isNearEnd by remember {
+        derivedStateOf {
+            val layoutInfo = timelineState.layoutInfo
+            val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()?.index
+            val totalItems = layoutInfo.totalItemsCount
+
+            if (totalItems == 0) return@derivedStateOf false
+
+            // 允许有 1 个误差（更自然）
+            lastVisibleItem != null && lastVisibleItem >= totalItems - 2
+        }
+    }
+    LaunchedEffect(activities.size) {
+        if (activities.size > 1 && isNearEnd) {
+
+            val distance = with(density) {
+                (95.dp + 16.dp).toPx()
+            }
+            timelineState.animateScrollBy(
+                value = distance,
+                animationSpec = spring(
+                    stiffness = Spring.StiffnessLow,
+                    dampingRatio = Spring.DampingRatioNoBouncy
+                )
+            )
+        }
+    }
+    // 在 ContentAreaMobile 内部
+
+// 计算磁吸对齐的偏移量
+// 我们希望 Item 的中心对齐到：容器宽度 - 92dp (箭头位置)
+    val snapBehavior = rememberSnapFlingBehavior(
+        snapLayoutInfoProvider = remember(timelineState) {
+            object : SnapLayoutInfoProvider {
+                // 核心修正：使用 calculateSnapOffset 替代旧方法
+                override fun calculateSnapOffset(velocity: Float): Float {
+                    val layoutInfo = timelineState.layoutInfo
+                    val visibleItems = layoutInfo.visibleItemsInfo
+                    if (visibleItems.isEmpty()) return 0f
+
+                    val containerWidth = layoutInfo.viewportSize.width
+                    // 判定点在屏幕上的绝对位置（箭头位置）
+                    val triggerPoint = containerWidth - with(density) { (92.dp - 12.dp).toPx() }
+
+                    // 找到中心点离判定点最近的 Item
+                    val closestItem = visibleItems.minByOrNull { item ->
+                        val itemCenter = item.offset + (item.size / 2)
+                        kotlin.math.abs(itemCenter - triggerPoint)
+                    } ?: return 0f
+
+                    // 计算该 Item 中心距离判定点的物理位移
+                    val currentItemCenter = closestItem.offset + (closestItem.size / 2)
+
+                    // 返回值：正数表示向右修正，负数表示向左修正
+                    return currentItemCenter - triggerPoint
+                }
+            }
+        }
+    )
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(surfaceColor)
     ) {
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(6),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            if (pageIndex == 0) {
-                // 1. 统计数据卡片
-                item(span = { GridItemSpan(3) }) { StatCard("获赞", "1.2k", Icons.Default.Favorite, Color(0xFFFFEBEE)) }
-                item(span = { GridItemSpan(3) }) { StatCard("关注", "328", Icons.Default.Person, Color(0xFFE3F2FD)) }
+        AnimatedContent(
+            targetState = pageIndex,
+            transitionSpec = {
+                // 定义动画：新页面从底部滑入 + 淡入，旧页面向上滑出 + 淡出
+                (slideInVertically { height -> height } + fadeIn(animationSpec = tween(400)))
+                    .togetherWith(slideOutVertically { height -> -height } + fadeOut(animationSpec = tween(400)))
+            },
+            label = "PageTransition"
+        ) { targetPageIndex ->
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(6),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val change = event.changes.first()
 
-                // 2. 进度条卡片
-                item(span = { GridItemSpan(6) }) {
-                    Box(modifier = Modifier.fillMaxWidth().height(80.dp).clip(RoundedCornerShape(7.dp)).background(cardGray).padding(16.dp)) {
-                        Column {
-                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                                Text("任务进度", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
-                                Text("75%", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                if (change.pressed) {
+                                    isTimelineActive = false
+                                }
+
                             }
-                            Spacer(Modifier.height(8.dp))
-                            LinearProgressIndicator(progress = { 0.75f }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape))
+                        }
+                    },
+                contentPadding = PaddingValues(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (targetPageIndex == 0) {
+                    item(span = { GridItemSpan(6) }) {
+                        Text(
+                            "基本进度",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+                        )
+                    }
+
+                    // 1. 统计数据卡片
+                    item(span = { GridItemSpan(3) }) {
+                        StatCard(
+                            "获赞",
+                            "1.2k",
+                            Icons.Default.Favorite,
+                            Color(0xFFFFEBEE)
+                        )
+                    }
+                    item(span = { GridItemSpan(3) }) {
+                        StatCard(
+                            "关注",
+                            "328",
+                            Icons.Default.Person,
+                            Color(0xFFE3F2FD)
+                        )
+                    }
+
+                    // 2. 进度条卡片
+                    item(span = { GridItemSpan(6) }) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(80.dp).clip(RoundedCornerShape(7.dp))
+                                .background(cardGray).padding(16.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("任务进度", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                                    Text(
+                                        "75%",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = { 0.75f },
+                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape)
+                                )
+                            }
                         }
                     }
-                }
 
-                // 3. 核心交互区域
-                item(span = { GridItemSpan(6) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // --- 左侧：功能卡片 + 弹出位置 Card ---
-                        Box(modifier = Modifier.weight(4f)) {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(Color(0xFFFFF9C4)).clickable { }, contentAlignment = Alignment.Center) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Star, null); Text("收藏", style = MaterialTheme.typography.labelSmall) }
+                    item(span = { GridItemSpan(6) }) {
+                        Text(
+                            "详细信息",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(top = 12.dp, start = 4.dp, bottom = 4.dp)
+                        )
+                    }
+
+                    // 3. 核心交互区域
+                    item(span = { GridItemSpan(6) }) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // --- 左侧：功能卡片 + 弹出位置 Card ---
+                            Box(modifier = Modifier.weight(4f)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(
+                                            modifier = Modifier.weight(1f).aspectRatio(1f)
+                                                .clip(RoundedCornerShape(7.dp)).background(Color(0xFFFFF9C4))
+                                                .clickable { },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Icon(
+                                                    Icons.Default.Star,
+                                                    null
+                                                ); Text("收藏", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                        Box(
+                                            modifier = Modifier.weight(1f).aspectRatio(1f)
+                                                .clip(RoundedCornerShape(7.dp)).background(cardGray).clickable { },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Icon(
+                                                    Icons.Default.Settings,
+                                                    null
+                                                ); Text("设置", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
                                     }
-                                    Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(cardGray).clickable { }, contentAlignment = Alignment.Center) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Settings, null); Text("设置", style = MaterialTheme.typography.labelSmall) }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(
+                                            modifier = Modifier.weight(1f).aspectRatio(1f)
+                                                .clip(RoundedCornerShape(7.dp)).background(Color(0xFFE1F5FE))
+                                                .clickable { },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Icon(
+                                                    Icons.Default.Build,
+                                                    null
+                                                ); Text("勋章", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                        Box(
+                                            modifier = Modifier.weight(1f).aspectRatio(1f)
+                                                .clip(RoundedCornerShape(7.dp)).background(cardGray).clickable {
+                                                activities.add(
+                                                    ActivityLog(
+                                                        "抵达 WP-1",
+                                                        ActivityType.LIFE, Clock.System.now().toEpochMilliseconds()
+                                                    )
+                                                )
+                                            }, contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Icon(
+                                                    Icons.Default.Build,
+                                                    null
+                                                ); Text("睡觉", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
                                     }
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(Color(0xFFE1F5FE)).clickable { }, contentAlignment = Alignment.Center) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Build, null); Text("勋章", style = MaterialTheme.typography.labelSmall) }
-                                    }
-                                    Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(cardGray).clickable { }, contentAlignment = Alignment.Center) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Build, null); Text("睡觉", style = MaterialTheme.typography.labelSmall) }
-                                    }
-                                }
-                            }
 
-                            // --- 位置信息 Card ---
-                            androidx.compose.animation.AnimatedVisibility(
-                                visible = hoveredWaypointIndex != null && displayIndex != null,
-                                enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
-                                exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(7.dp)).background(MaterialTheme.colorScheme.primaryContainer).border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(7.dp)).padding(16.dp)
+                                // --- 位置信息 Card ---
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = hoveredWaypointIndex != null && displayIndex != null,
+                                    enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
+                                    exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
+                                    modifier = Modifier.fillMaxSize()
                                 ) {
-                                    AnimatedContent(
-                                        targetState = displayIndex,
-                                        transitionSpec = {
-                                            // 如果是从 null 变到数字（即刚开始触摸），不滚动，只淡入
+                                    Box(
+                                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(7.dp))
+                                            .background(MaterialTheme.colorScheme.primaryContainer)
+                                            .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(7.dp))
+                                            .padding(16.dp)
+                                    ) {
+                                        AnimatedContent(
+                                            targetState = displayIndex,
+                                            transitionSpec = {
+                                                // 如果是从 null 变到数字（即刚开始触摸），不滚动，只淡入
 //                                            if (initialState == null) {
 //                                                fadeIn() togetherWith fadeOut()
 //                                            } else {
@@ -1108,212 +1303,417 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                                 } else {
                                                     slideInVertically { -it } + fadeIn() togetherWith slideOutVertically { it } + fadeOut()
                                                 }
-                                            //}.using(SizeTransform(clip = false))
-                                        }
-                                    ) { target ->
-                                        if (target != null) {
-                                            Column {
-                                                Text("位置详情", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                                Text("WP-$target", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                                                Spacer(Modifier.weight(1f))
-                                                Text("坐标: ${30.123}, ${120.456}", style = MaterialTheme.typography.bodySmall)
+                                                //}.using(SizeTransform(clip = false))
+                                            }
+                                        ) { target ->
+                                            if (target != null) {
+                                                Column {
+                                                    Text(
+                                                        "位置详情",
+                                                        style = MaterialTheme.typography.labelLarge,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                    Text(
+                                                        "WP-$target",
+                                                        style = MaterialTheme.typography.headlineSmall,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Spacer(Modifier.weight(1f))
+                                                    Text(
+                                                        "坐标: ${30.123}, ${120.456}",
+                                                        style = MaterialTheme.typography.bodySmall
+                                                    )
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
+
+                            // --- 右侧：航线节点链 ---
+                            data class Waypoint(val id: Int, val distanceToNext: Float)
+
+                            val allWaypoints = remember {
+                                List(20) { i ->
+                                    Waypoint(
+                                        id = i + 1,
+                                        distanceToNext = (50..300).random().toFloat()
+                                    )
+                                }
+                            }
+                            var currentIndex by remember { mutableIntStateOf(1) }
+                            val nodePositions = remember { mutableMapOf<Int, Float>() }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(2.4f).fillMaxHeight().clip(RoundedCornerShape(7.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                    .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(7.dp))
+                                    .padding(8.dp)
+
+                            ) {
+                                Row(modifier = Modifier.fillMaxSize()) {
+                                    Column(
+                                        modifier = Modifier.fillMaxHeight()
+                                            .padding(top = 6.dp, bottom = 6.dp, start = 12.dp).pointerInput(Unit) {
+                                            awaitPointerEventScope {
+                                                while (true) {
+                                                    val event = awaitPointerEvent()
+                                                    val pointer = event.changes.first()
+                                                    val pos = pointer.position
+                                                    val isInNodeZone = pos.x < 45.dp.toPx()
+
+                                                    if (pointer.pressed && isInNodeZone) {
+                                                        pointer.consume()
+                                                        val closest =
+                                                            nodePositions.minByOrNull { kotlin.math.abs(it.value - pos.y) }
+                                                        if (closest != null && kotlin.math.abs(closest.value - pos.y) < 60f) {
+                                                            // 先设置索引，再设置可见性，确保 Card 弹出时内容已就绪
+                                                            if (displayIndex != closest.key) {
+                                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            }
+                                                            displayIndex = closest.key
+                                                            hoveredWaypointIndex = closest.key
+
+                                                        }
+                                                    } else {
+                                                        if (hoveredWaypointIndex != null) {
+                                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        }
+                                                        hoveredWaypointIndex = null
+                                                        pointer.consume()
+                                                        // 注意：此处不立即清空 displayIndex，由 LaunchedEffect 处理
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        // 计算各段距离权重 (增加平滑动画)
+                                        val wNext2 by animateFloatAsState(
+                                            targetValue = ((allWaypoints.getOrNull(currentIndex + 1)?.distanceToNext
+                                                ?: 100f) / 50f).coerceIn(0.5f, 5f),
+                                            animationSpec = tween(450) // 这里的时长决定了节点挪动的速度
+                                        )
+                                        val wNext1 by animateFloatAsState(
+                                            targetValue = ((allWaypoints.getOrNull(currentIndex)?.distanceToNext
+                                                ?: 100f) / 50f).coerceIn(0.5f, 5f),
+                                            animationSpec = tween(450)
+                                        )
+                                        val wPast by animateFloatAsState(
+                                            targetValue = ((allWaypoints.getOrNull(currentIndex - 1)?.distanceToNext
+                                                ?: 50f) / 50f).coerceIn(0.5f, 2f),
+                                            animationSpec = tween(450)
+                                        )
+
+                                        Box(
+                                            modifier = Modifier.size(6.dp)
+                                                .border(1.dp, Color.Gray.copy(alpha = 0.5f), CircleShape)
+                                                .onGloballyPositioned {
+                                                    nodePositions[currentIndex + 2] = it.positionInParent().y
+                                                })
+                                        Box(
+                                            modifier = Modifier.width(1.dp).weight(wNext2)
+                                                .background(Color.Gray.copy(alpha = 0.3f))
+                                        )
+                                        Box(
+                                            modifier = Modifier.size(8.dp).border(1.dp, Color.Gray, CircleShape)
+                                                .background(MaterialTheme.colorScheme.surface, CircleShape)
+                                                .onGloballyPositioned {
+                                                    nodePositions[currentIndex + 1] = it.positionInParent().y
+                                                })
+                                        Box(
+                                            modifier = Modifier.width(1.dp).weight(wNext1)
+                                                .background(Color.Gray.copy(alpha = 0.3f))
+                                        )
+                                        Box(
+                                            modifier = Modifier.size(16.dp)
+                                                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                                .padding(3.dp)
+                                                .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                                .onGloballyPositioned {
+                                                    nodePositions[currentIndex] = it.positionInParent().y
+                                                })
+                                        Box(
+                                            modifier = Modifier.width(2.dp).weight(wPast)
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                                        )
+                                        Box(
+                                            modifier = Modifier.size(6.dp).background(
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                                CircleShape
+                                            ).onGloballyPositioned {
+                                                nodePositions[currentIndex - 1] = it.positionInParent().y
+                                            })
+                                    }
+
+                                    Column(
+                                        modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 4.dp),
+                                        verticalArrangement = Arrangement.SpaceBetween,
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.End,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(
+                                                "NEXT WP",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontSize = 9.sp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = "WP-$currentIndex",
+                                                style = MaterialTheme.typography.titleLarge,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+
+                                        // 距离显示
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.size(70.dp) // 稍微加大一点容器，防止数字大时显得拥挤
+                                        ) {
+                                            val currentDistance =
+                                                allWaypoints.getOrNull(currentIndex)?.distanceToNext ?: 0f
+
+                                            CircularProgressIndicator(
+                                                progress = { 0.7f },
+                                                modifier = Modifier.fillMaxSize(),
+                                                strokeWidth = 3.dp,
+                                                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                            )
+
+                                            // 数字与单位
+                                            Row(
+                                                verticalAlignment = Alignment.Bottom, // 关键：让单位对齐数字底部
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                Text(
+                                                    text = currentDistance.toInt().toString(),
+                                                    fontSize = 20.sp, // 使用更大的字体
+                                                    fontWeight = FontWeight.ExtraBold, // 加粗
+                                                    lineHeight = 1.em // 紧凑行高
+                                                )
+                                                Text(
+                                                    text = "m",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontSize = 9.sp, // 保持单位较小
+                                                    color = Color.Gray,
+                                                    modifier = Modifier.padding(start = 1.dp, bottom = 2.dp) // 微调单位位置
+                                                )
+                                            }
+                                        }
+
+                                        // 抵达按钮
+                                        IconButton(
+                                            onClick = {
+                                                if (currentIndex < allWaypoints.size - 2) currentIndex++ else currentIndex =
+                                                    1
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            },
+                                            modifier = Modifier
+                                                .align(Alignment.End) // 如果在 Column 里，靠右对齐
+                                                .size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                                contentDescription = "Next",
+                                                modifier = Modifier.size(24.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
+                    }
 
-                        // --- 右侧：航线节点链 ---
-                        data class Waypoint(val id: Int, val distanceToNext: Float)
-                        val allWaypoints = remember { List(20) { i -> Waypoint(id = i + 1, distanceToNext = (50..300).random().toFloat()) } }
-                        var currentIndex by remember { mutableIntStateOf(1) }
-                        val nodePositions = remember { mutableMapOf<Int, Float>() }
+                    // 4. 最近动态 - 横向时间轴
+                    item(span = { GridItemSpan(6) }) {
+                        Text(
+                            "最近动态",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(top = 12.dp, start = 4.dp, bottom = 4.dp)
+                        )
+                    }
 
-                        Box(
+                    item(span = { GridItemSpan(6) }) {
+                        // --- 状态：追踪当前指向的活动 ---
+                        val activeActivity by remember {
+                            derivedStateOf {
+                                val layoutInfo = timelineState.layoutInfo
+                                val visibleItems = layoutInfo.visibleItemsInfo
+                                if (visibleItems.isEmpty()) return@derivedStateOf null
+
+                                // 1. 获取容器的总宽度
+                                val containerWidth = layoutInfo.viewportSize.width
+
+                                // 2. 计算判定点的位置：容器宽度 - 箭头距离右边的 padding (92dp) - 箭头自身宽度的一半 (12dp)
+                                // 这样判定点就正好落在箭头的尖端正下方
+                                val triggerPoint = containerWidth - with(density) { (92.dp - 12.dp).toPx() }
+
+                                // 3. 寻找中心点最接近该判定点的项
+                                visibleItems.minByOrNull { item ->
+                                    val itemCenter = item.offset + (item.size / 2)
+                                    kotlin.math.abs(itemCenter - triggerPoint)
+                                }?.let { activities.getOrNull(it.index) }
+                            }
+                        }
+                        LaunchedEffect(activeActivity) {
+                            if (activeActivity != null && isTimelineActive) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        }
+                        Column(
                             modifier = Modifier
-                                .weight(2.4f).fillMaxHeight().clip(RoundedCornerShape(7.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(7.dp))
-                                .padding(8.dp)
+                                .fillMaxWidth()
                                 .pointerInput(Unit) {
                                     awaitPointerEventScope {
                                         while (true) {
-                                            val event = awaitPointerEvent()
-                                            val pointer = event.changes.first()
-                                            val pos = pointer.position
-                                            val isInNodeZone = pos.x < 45.dp.toPx()
+                                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                                            val change = event.changes.first()
 
-                                            if (pointer.pressed && isInNodeZone) {
-                                                val closest = nodePositions.minByOrNull { kotlin.math.abs(it.value - pos.y) }
-                                                if (closest != null && kotlin.math.abs(closest.value - pos.y) < 60f) {
-                                                    // 先设置索引，再设置可见性，确保 Card 弹出时内容已就绪
-                                                    if (displayIndex != closest.key) {
-                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    }
-                                                    displayIndex = closest.key
-                                                    hoveredWaypointIndex = closest.key
+                                            if (change.pressed) {
+                                                isTimelineActive = true
+                                            }
 
-                                                }
-                                            } else {
-                                                if (hoveredWaypointIndex != null) {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                }
-                                                hoveredWaypointIndex = null
-                                                // 注意：此处不立即清空 displayIndex，由 LaunchedEffect 处理
+                                        }
+                                    }
+                                }
+                        ) {
+                            // 时间轴容器
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(cardGray.copy(alpha = 0.3f))
+                                    .padding(vertical = 12.dp)
+                            ) {
+                                // --- 新增：向下指的箭头指示器 ---
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd) // 改为右上角对齐
+                                        .padding(end = 87.dp)    // 距离右边缘一段距离，对齐最后一个 Item 的大致位置
+                                        .size(24.dp)
+                                        .offset(y = (-19).dp)
+                                )
+
+                                LazyRow(
+                                    state = timelineState,
+                                    flingBehavior = snapBehavior,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 16.dp) // 增加内边距方便滑动
+                                ) {
+                                    itemsIndexed(
+                                        items = activities,
+                                        key = { index, item -> item.timestamp }
+                                    ) { index, activity ->
+                                        TimelineItem(
+                                            activity = activity,
+                                            isFirst = index == 0,
+                                            isLast = index == activities.size - 1,
+                                            isSelected = activeActivity == activity,
+                                            modifier = Modifier.animateItem()
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = isTimelineActive,
+                                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
+                            ) {
+                                // --- 新增：详情展示 Card ---
+                                AnimatedContent(
+                                    targetState = activeActivity,
+                                    transitionSpec = {
+                                        // 获取初始状态和目标状态在原列表中的索引
+                                        val initialIndex = activities.indexOf(initialState)
+                                        val targetIndex = activities.indexOf(targetState)
+
+                                        // 如果目标索引大于初始索引，说明时间轴在向左滚动（查看未来的项），新卡片应从右侧滑入
+                                        if (targetIndex > initialIndex) {
+                                            (slideInHorizontally { it } + fadeIn()).togetherWith(
+                                                slideOutHorizontally { -it } + fadeOut()
+                                            )
+                                        } else {
+                                            // 否则，新卡片从左侧滑入
+                                            (slideInHorizontally { -it } + fadeIn()).togetherWith(
+                                                slideOutHorizontally { it } + fadeOut()
+                                            )
+                                        }.using(
+                                            // 加上 SizeTransform(clip = false) 可以防止动画过程中阴影被裁剪
+                                            SizeTransform(clip = false)
+                                        )
+                                    },
+                                    label = "ActivityDetail"
+                                ) { target ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().aspectRatio(3f),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = Color(0xFFE8E8E8)
+                                        ),
+                                        shape = RoundedCornerShape(7.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(40.dp)
+                                                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Info,
+                                                    null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                            Spacer(Modifier.width(12.dp))
+                                            Column {
+                                                Text(
+                                                    text = target?.title ?: "滑动查看动态",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    text = if (target != null) "记录时间: ${target.timestamp.toFormattedTime()}" else "请左右滑动上方时间轴",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = Color.Gray
+                                                )
                                             }
                                         }
                                     }
                                 }
-                        ) {
-                            Row(modifier = Modifier.fillMaxSize()) {
-                                Column(
-                                    modifier = Modifier.fillMaxHeight().padding(top = 6.dp, bottom = 6.dp, start = 12.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    // 计算各段距离权重 (增加平滑动画)
-                                    val wNext2 by animateFloatAsState(
-                                        targetValue = ((allWaypoints.getOrNull(currentIndex + 1)?.distanceToNext ?: 100f) / 50f).coerceIn(0.5f, 5f),
-                                        animationSpec = tween(450) // 这里的时长决定了节点挪动的速度
-                                    )
-                                    val wNext1 by animateFloatAsState(
-                                        targetValue = ((allWaypoints.getOrNull(currentIndex)?.distanceToNext ?: 100f) / 50f).coerceIn(0.5f, 5f),
-                                        animationSpec = tween(450)
-                                    )
-                                    val wPast by animateFloatAsState(
-                                        targetValue = ((allWaypoints.getOrNull(currentIndex - 1)?.distanceToNext ?: 50f) / 50f).coerceIn(0.5f, 2f),
-                                        animationSpec = tween(450)
-                                    )
-
-                                    Box(modifier = Modifier.size(6.dp).border(1.dp, Color.Gray.copy(alpha = 0.5f), CircleShape).onGloballyPositioned { nodePositions[currentIndex + 2] = it.positionInParent().y })
-                                    Box(modifier = Modifier.width(1.dp).weight(wNext2).background(Color.Gray.copy(alpha = 0.3f)))
-                                    Box(modifier = Modifier.size(8.dp).border(1.dp, Color.Gray, CircleShape).background(MaterialTheme.colorScheme.surface, CircleShape).onGloballyPositioned { nodePositions[currentIndex + 1] = it.positionInParent().y })
-                                    Box(modifier = Modifier.width(1.dp).weight(wNext1).background(Color.Gray.copy(alpha = 0.3f)))
-                                    Box(modifier = Modifier.size(16.dp).border(2.dp, MaterialTheme.colorScheme.primary, CircleShape).padding(3.dp).background(MaterialTheme.colorScheme.primary, CircleShape).onGloballyPositioned { nodePositions[currentIndex] = it.positionInParent().y })
-                                    Box(modifier = Modifier.width(2.dp).weight(wPast).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)))
-                                    Box(modifier = Modifier.size(6.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape).onGloballyPositioned { nodePositions[currentIndex - 1] = it.positionInParent().y })
-                                }
-
-                                Column(
-                                    modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 4.dp),
-                                    verticalArrangement = Arrangement.SpaceBetween,
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
-                                        Text("NEXT WP", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
-                                        Text(
-                                            text = "WP-$currentIndex",
-                                            style = MaterialTheme.typography.titleLarge,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-
-                                    // 距离显示
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier.size(70.dp) // 稍微加大一点容器，防止数字大时显得拥挤
-                                    ) {
-                                        val currentDistance = allWaypoints.getOrNull(currentIndex)?.distanceToNext ?: 0f
-
-                                        CircularProgressIndicator(
-                                            progress = { 0.7f },
-                                            modifier = Modifier.fillMaxSize(),
-                                            strokeWidth = 3.dp,
-                                            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                                        )
-
-                                        // 数字与单位
-                                        Row(
-                                            verticalAlignment = Alignment.Bottom, // 关键：让单位对齐数字底部
-                                            horizontalArrangement = Arrangement.Center
-                                        ) {
-                                            Text(
-                                                text = currentDistance.toInt().toString(),
-                                                fontSize = 20.sp, // 使用更大的字体
-                                                fontWeight = FontWeight.ExtraBold, // 加粗
-                                                lineHeight = 1.em // 紧凑行高
-                                            )
-                                            Text(
-                                                text = "m",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontSize = 9.sp, // 保持单位较小
-                                                color = Color.Gray,
-                                                modifier = Modifier.padding(start = 1.dp, bottom = 2.dp) // 微调单位位置
-                                            )
-                                        }
-                                    }
-
-                                    // 抵达按钮
-                                    IconButton(
-                                        onClick = {
-                                            if (currentIndex < allWaypoints.size - 2) currentIndex++ else currentIndex = 1
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                  },
-                                        modifier = Modifier
-                                            .align(Alignment.End) // 如果在 Column 里，靠右对齐
-                                            .size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                            contentDescription = "Next",
-                                            modifier = Modifier.size(24.dp),
-                                        )
-                                    }
-                                }
                             }
                         }
                     }
-                }
 
-                // 4. 最近动态 - 横向时间轴
-                item(span = { GridItemSpan(6) }) {
-                    Text(
-                        "最近动态",
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(top = 16.dp, start = 4.dp, bottom = 8.dp)
-                    )
-                }
-
-                item(span = { GridItemSpan(6) }) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(cardGray.copy(alpha = 0.3f)) // 给整个时间轴区域一个浅色底色
-                            .padding(vertical = 12.dp)
-                    ) {
-                        LazyRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 0.dp) // 靠边开始
+                    items(6, span = { GridItemSpan(3) }) { itemIndex ->
+                        Box(
+                            modifier = Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(cardGray),
+                            contentAlignment = Alignment.Center
                         ) {
-                            val activities = listOf(
-                                "任务已完成" to "10:30",
-                                "抵达 WP-1" to "11:15",
-                                "获得勋章" to "14:20",
-                                "系统更新" to "16:00",
-                                "任务结束" to "18:00",
-                                "我将下班" to "23:00",
-                                "我将洗澡" to "23:30",
-                                "我将睡觉" to "24:00",
-                            )
-
-                            itemsIndexed(activities) { index, activity ->
-                                TimelineItem(
-                                    title = activity.first,
-                                    time = activity.second,
-                                    isFirst = index == 0,
-                                    isLast = index == activities.size - 1
-                                )
-                            }
+                            Text("Item ${itemIndex + 1}", color = Color.Gray)
                         }
                     }
-                }
-
-            } else {
-                items(48, span = { GridItemSpan(3) }) { itemIndex ->
-                    Box(modifier = Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(cardGray), contentAlignment = Alignment.Center) {
-                        Text("Item ${itemIndex + 1}", color = Color.Gray)
+                } else {
+                    items(48, span = { GridItemSpan(3) }) { itemIndex ->
+                        Box(
+                            modifier = Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(cardGray),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Item ${itemIndex + 1}", color = Color.Gray)
+                        }
                     }
                 }
             }
@@ -1321,19 +1721,77 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
     }
 }
 
+enum class ActivityType {
+    TASK_COMPLETED,
+    WAYPOINT_REACHED,
+    MEDAL_EARNED,
+    SYSTEM_UPDATE,
+    TASK_END,
+    LIFE;
+
+    // 匹配圆点颜色
+    val primaryColor: Color
+        @Composable get() = when (this) {
+            TASK_COMPLETED -> Color(0xFF4CAF50) // 绿色
+            WAYPOINT_REACHED -> MaterialTheme.colorScheme.primary // 蓝色
+            MEDAL_EARNED -> Color(0xFFFFC107) // 金色
+            SYSTEM_UPDATE -> Color(0xFF9C27B0) // 紫色
+            TASK_END -> Color(0xFFF44336) // 红色
+            LIFE -> Color(0xFF607D8B) // 灰蓝色
+        }
+
+    // 匹配图标
+    val icon: ImageVector
+        get() = when (this) {
+            TASK_COMPLETED -> Icons.Default.CheckCircle
+            WAYPOINT_REACHED -> Icons.Default.LocationOn
+            MEDAL_EARNED -> Icons.Default.Star
+            SYSTEM_UPDATE -> Icons.Default.Refresh
+            TASK_END -> Icons.Default.Done
+            LIFE -> Icons.Default.Build
+        }
+}
+fun Long.toFormattedTime(): String {
+    val instant = Instant.fromEpochMilliseconds(this)
+    val dateTime = instant.toLocalDateTime(TimeZone.currentSystemDefault())
+    return "${dateTime.hour.toString().padStart(2, '0')}:${dateTime.minute.toString().padStart(2, '0')}"
+}
+data class ActivityLog(
+    val title: String,
+    val type: ActivityType,
+    val timestamp: Long
+)
 @Composable
 fun TimelineItem(
-    title: String,
-    time: String,
+    activity: ActivityLog,
     isFirst: Boolean,
-    isLast: Boolean
+    isLast: Boolean,
+    isSelected: Boolean,
+    modifier: Modifier = Modifier
 ) {
-    val primaryColor = MaterialTheme.colorScheme.primary
+    val accentColor = activity.type.primaryColor
     val lineColor = Color.LightGray.copy(alpha = 0.7f)
-    val dotSize = 12.dp
+
+    val dotSize by animateDpAsState(
+        targetValue = if (isSelected) 14.dp else 10.dp, // 选中时圆点变大
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "dotSize"
+    )
+
+    val ringAlpha by animateFloatAsState(
+        targetValue = if (isSelected) 1f else 0f, // 选中时圆环透明度
+        animationSpec = tween(400),
+        label = "ringAlpha"
+    )
+
+    val ringScale by animateFloatAsState(
+        targetValue = if (isSelected) 1f else 0.5f, // 选中时圆环从小变大
+        animationSpec = tween(400, easing = LinearOutSlowInEasing),
+        label = "ringScale"
+    )
 
     Column(
-        modifier = Modifier.width(95.dp), // 每个节点的固定宽度
+        modifier = modifier.width(95.dp), // 每个节点的固定宽度
         horizontalAlignment = Alignment.Start
     ) {
         // --- 顶部：轴线与圆点区域 ---
@@ -1368,16 +1826,31 @@ fun TimelineItem(
                     )
                 }
             }
-
-            // 圆点：固定在最左侧（偏移半个宽度以对齐线）
             Box(
-                modifier = Modifier
-                    .size(dotSize)
-                    .background(MaterialTheme.colorScheme.surface, CircleShape)
-                    .border(2.dp, primaryColor, CircleShape)
-                    .padding(2.dp)
+                modifier = Modifier.size(24.dp),
+                contentAlignment = Alignment.Center // 内部组件相对于 24.dp 的中心对齐
             ) {
-                Box(modifier = Modifier.fillMaxSize().background(primaryColor, CircleShape))
+                // --- 选中圆环 (包裹在圆点外面) ---
+                Box(
+                    modifier = Modifier
+                        .size(24.dp) // 圆环的最大尺寸
+                        .graphicsLayer {
+                            alpha = ringAlpha
+                            scaleX = ringScale
+                            scaleY = ringScale
+                        }
+                        .border(2.dp, accentColor.copy(alpha = 0.6f), CircleShape)
+                )
+                // 圆点：固定在最左侧（偏移半个宽度以对齐线）
+                Box(
+                    modifier = Modifier
+                        .size(dotSize)
+                        .background(MaterialTheme.colorScheme.surface, CircleShape)
+                        .border(2.dp, accentColor, CircleShape)
+                        .padding(2.dp)
+                ) {
+                    Box(modifier = Modifier.fillMaxSize().background(accentColor, CircleShape))
+                }
             }
         }
 
@@ -1387,13 +1860,13 @@ fun TimelineItem(
             modifier = Modifier.padding(start = 0.dp, top = 4.dp, end = 12.dp)
         ) {
             Text(
-                text = time,
+                text = activity.timestamp.toFormattedTime(),
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.Gray,
                 fontSize = 10.sp
             )
             Text(
-                text = title,
+                text = activity.title,
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
