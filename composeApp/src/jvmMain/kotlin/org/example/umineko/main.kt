@@ -24,7 +24,7 @@ fun main() = application {
 @Composable
 actual fun determinePlatformType(): PlatformType {
     //桌面端用于测试TABLET版本的UI（主要是我没有平板~）
-    return PlatformType.TABLET
+    //return PlatformType.TABLET
 
     var platformType by remember { mutableStateOf(PlatformType.DESKTOP) }
 

@@ -37,6 +37,7 @@ import androidx.compose.animation.with
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,6 +48,7 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
+import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -81,20 +83,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter.Companion.tint
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -111,6 +118,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import org.jetbrains.compose.resources.painterResource
+import umineko.composeapp.generated.resources.Res
+import umineko.composeapp.generated.resources.map
 import kotlin.math.roundToInt
 import kotlin.math.cos
 import kotlin.math.sin
@@ -222,7 +232,7 @@ fun MainLayout() {
                 )
                 Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(horizontal = 6.dp)) {
                     TopCommandBarDesktop(title = navItems[selectedIndex].title)
-                    ContentAreaMobile(pageIndex = selectedIndex)
+                    ContentArea(pageIndex = selectedIndex)
                 }
             }
 
@@ -450,7 +460,7 @@ fun NavigationPaneTablet(
                 )
 
                 Box(modifier = Modifier.weight(1f)) {
-                    ContentAreaMobile(pageIndex = selectedIndex)
+                    ContentArea(pageIndex = selectedIndex)
                 }
             }
         }
@@ -1000,34 +1010,859 @@ fun AnimatedNavigationItem(
 
 @Composable
 fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
+    //数据初始化
+    val activities = SampleData.activitiesList
+    val allAircraft = SampleData.aircraftList
+
+    var expandedStat by remember { mutableStateOf<String?>(null) }
+    val colorA = Color(0xFFFFEBEE)
+    val colorB = Color(0xFFE3F2FD)
+    val cardGray = Color(0xFFE8E8E8)
+    val animatedDetailColor by animateColorAsState(
+        targetValue = when (expandedStat) {
+            "A"  -> colorA
+            "B"  -> colorB
+            else -> cardGray
+        },
+        label = "detailColor"
+    )
+
+    val haptic = LocalHapticFeedback.current
+
+    var hoveredWaypointIndex by remember { mutableStateOf<Int?>(null) }
+    var displayIndex by remember { mutableStateOf<Int?>(null) }
+
+    val timelineState = rememberLazyListState()
+    val density = LocalDensity.current
+    var isTimelineActive by remember { mutableStateOf(false) }
+    val snapBehavior = rememberSnapFlingBehavior(
+        snapLayoutInfoProvider = remember(timelineState) {
+            object : SnapLayoutInfoProvider {
+                override fun calculateSnapOffset(velocity: Float): Float {
+                    val layoutInfo = timelineState.layoutInfo
+                    val visibleItems = layoutInfo.visibleItemsInfo
+                    if (visibleItems.isEmpty()) return 0f
+                    val containerWidth = layoutInfo.viewportSize.width
+                    val triggerPoint = containerWidth - with(density) { (92.dp - 12.dp).toPx() }
+                    val closestItem = visibleItems.minByOrNull { item ->
+                        val itemCenter = item.offset + (item.size / 2)
+                        kotlin.math.abs(itemCenter - triggerPoint)
+                    } ?: return 0f
+                    val currentItemCenter = closestItem.offset + (closestItem.size / 2)
+                    return currentItemCenter - triggerPoint
+                }
+            }
+        }
+    )
+
+    var aircraftColumnCount by remember { mutableIntStateOf(1) }
+    var aircraftSearchQuery by remember { mutableStateOf("") }
+    val filteredAircraft by remember {
+        derivedStateOf {
+            val q = aircraftSearchQuery.trim()
+            if (q.isEmpty()) allAircraft
+            else allAircraft.filter {
+                it.id.contains(q, ignoreCase = true) ||
+                        it.model.contains(q, ignoreCase = true) ||
+                        it.mission.contains(q, ignoreCase = true)
+            }
+        }
+    }
+
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
     ) {
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 10.dp)
-        ) {
-            items(48) { itemIndex ->
-                Box(
-                    modifier = Modifier
-                        .padding(4.dp)
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(5.dp))
-                        .background(Color(0xFFE8E8E8)),
-                    contentAlignment = Alignment.Center
+        AnimatedContent(
+            targetState = pageIndex,
+            transitionSpec = {
+                (slideInVertically { height -> height } + fadeIn(animationSpec = tween(400)))
+                    .togetherWith(slideOutVertically { height -> -height } + fadeOut(animationSpec = tween(400)))
+                    .using(SizeTransform(clip = false))
+
+            },
+            label = "PageTransition"
+        ) { targetPageIndex ->
+            if (targetPageIndex == 0) {
+                Row(
+                    modifier = Modifier.fillMaxSize()
                 ) {
-                    Text(
-                        text = "Page $pageIndex\nItem ${itemIndex + 1}",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(6),
+                        modifier = Modifier.weight(1f).fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        item(span = { GridItemSpan(6) }) {
+                            Text(
+                                "基本进度",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+                            )
+                        }
+
+                        item(span = { GridItemSpan(6) }) {
+                            val anyExpanded = expandedStat != null
+                            val isASelected = expandedStat == "A"
+                            val isBSelected = expandedStat == "B"
+                            val animatedColorA by animateColorAsState(targetValue = if (isASelected) colorA else cardGray)
+                            val animatedColorB by animateColorAsState(targetValue = if (isBSelected) colorB else cardGray)
+                            val weightA by animateFloatAsState(
+                                targetValue = when {
+                                    !anyExpanded -> 1f; isASelected -> 0.7f; else -> 1.3f
+                                },
+                                animationSpec = tween(300), label = "weightA"
+                            )
+                            val weightB by animateFloatAsState(
+                                targetValue = when {
+                                    !anyExpanded -> 1f; isBSelected -> 0.7f; else -> 1.3f
+                                },
+                                animationSpec = tween(300), label = "weightB"
+                            )
+                            val heightFactorA by animateFloatAsState(
+                                targetValue = when {
+                                    !anyExpanded -> 1.5f; else -> 3.1f
+                                },
+                                animationSpec = tween(300), label = "heightFactorA"
+                            )
+                            val heightFactorB by animateFloatAsState(
+                                targetValue = when {
+                                    !anyExpanded -> 1.5f; else -> 3.1f
+                                },
+                                animationSpec = tween(300), label = "heightFactorB"
+                            )
+                            val compensatedRatioA = heightFactorA * weightA
+                            val compensatedRatioB = heightFactorB * weightB
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(modifier = Modifier.weight(weightA)) {
+                                    val bottomCorner by animateDpAsState(
+                                        targetValue = if (isASelected) 0.dp else 7.dp,
+                                        label = "cornerA"
+                                    )
+                                    val bottomPadding by animateDpAsState(
+                                        targetValue = if (isASelected) 1.dp else 7.dp,
+                                        animationSpec = tween(300),
+                                        label = "paddingA"
+                                    )
+                                    val startPadding by animateDpAsState(
+                                        targetValue = if (isASelected) 16.dp else 8.dp,
+                                        animationSpec = tween(300),
+                                        label = "startPaddingA"
+                                    )
+                                    StatCard(
+                                        label = "正在航行",
+                                        value = "05 / 16",
+                                        icon = Icons.Default.Favorite,
+                                        containerColor = animatedColorA,
+                                        onClick = {
+                                            expandedStat = if (isASelected) null else "A"; haptic.performHapticFeedback(
+                                            HapticFeedbackType.ContextClick
+                                        )
+                                        },
+                                        shape = RoundedCornerShape(
+                                            topStart = 7.dp,
+                                            topEnd = 7.dp,
+                                            bottomStart = bottomCorner,
+                                            bottomEnd = bottomCorner
+                                        ),
+                                        ratio = compensatedRatioA,
+                                        bottomPadding = bottomPadding,
+                                        startPadding = startPadding
+                                    )
+                                }
+                                Box(modifier = Modifier.weight(weightB)) {
+                                    val bottomCorner by animateDpAsState(
+                                        targetValue = if (isBSelected) 0.dp else 7.dp,
+                                        label = "cornerB"
+                                    )
+                                    val bottomPadding by animateDpAsState(
+                                        targetValue = if (isBSelected) 1.dp else 7.dp,
+                                        animationSpec = tween(300),
+                                        label = "paddingB"
+                                    )
+                                    val startPadding by animateDpAsState(
+                                        targetValue = if (isASelected) 16.dp else 8.dp,
+                                        animationSpec = tween(300),
+                                        label = "startPaddingB"
+                                    )
+                                    StatCard(
+                                        label = "最低续航",
+                                        value = "12h 32m",
+                                        icon = Icons.Default.Person,
+                                        containerColor = animatedColorB,
+                                        onClick = {
+                                            expandedStat = if (isBSelected) null else "B"; haptic.performHapticFeedback(
+                                            HapticFeedbackType.ContextClick
+                                        )
+                                        },
+                                        shape = RoundedCornerShape(
+                                            topStart = 7.dp,
+                                            topEnd = 7.dp,
+                                            bottomStart = bottomCorner,
+                                            bottomEnd = bottomCorner
+                                        ),
+                                        ratio = compensatedRatioB,
+                                        bottomPadding = bottomPadding,
+                                        startPadding = startPadding
+                                    )
+                                }
+                            }
+                        }
+
+                        item(span = { GridItemSpan(6) }) {
+                            AnimatedVisibility(
+                                visible = expandedStat != null,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut(),
+                                modifier = Modifier.fillMaxWidth().offset(y = -4.dp),
+                            ) {
+                                val isLeftExpanded = expandedStat == "A"
+                                DetailCard(
+                                    modifier = Modifier.fillMaxWidth().aspectRatio(2.6f),
+                                    containerColor = animatedDetailColor,
+                                    shape = if (isLeftExpanded)
+                                        RoundedCornerShape(
+                                            topStart = 0.dp,
+                                            topEnd = 7.dp,
+                                            bottomStart = 7.dp,
+                                            bottomEnd = 7.dp
+                                        )
+                                    else
+                                        RoundedCornerShape(
+                                            topStart = 7.dp,
+                                            topEnd = 0.dp,
+                                            bottomStart = 7.dp,
+                                            bottomEnd = 7.dp
+                                        ),
+                                    content = {
+                                        Text(
+                                            text = if (expandedStat == "A") "航行状态" else "续航状态",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Spacer(Modifier.height(6.dp))
+                                        val mockData =
+                                            remember { List(48) { FlightStatus.entries.toTypedArray().random() } }
+                                        AnimatedContent(
+                                            targetState = expandedStat,
+                                            transitionSpec = {
+                                                if (targetState == null || initialState == null) {
+                                                    fadeIn() togetherWith fadeOut()
+                                                } else {
+                                                    val isForward = targetState == "B"
+                                                    if (isForward) {
+                                                        slideInHorizontally { width -> -width } + fadeIn() togetherWith
+                                                                slideOutHorizontally { width -> width } + fadeOut()
+                                                    } else {
+                                                        slideInHorizontally { width -> width } + fadeIn() togetherWith
+                                                                slideOutHorizontally { width -> -width } + fadeOut()
+                                                    }.using(SizeTransform(clip = false))
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth().weight(1f)
+                                        ) { target ->
+                                            if (target == "A") {
+                                                FlightStatusSection(
+                                                    data = mockData,
+                                                    modifier = Modifier.fillMaxWidth().weight(1f)
+                                                )
+                                            } else {
+                                                val mockAircraft = remember {
+                                                    List(32) { index ->
+                                                        AircraftEndurance(
+                                                            id = "AC-${index + 1}",
+                                                            enduranceMinutes = (400..900).random()
+                                                        )
+                                                    }
+                                                }
+                                                AircraftEnduranceSection(
+                                                    data = mockAircraft,
+                                                    modifier = Modifier.fillMaxWidth().weight(1f)
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
+                        item(span = { GridItemSpan(6) }) {
+                            Text(
+                                "详细信息",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = 12.dp, start = 4.dp, bottom = 4.dp)
+                            )
+                        }
+
+                        item(span = { GridItemSpan(6) }) {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().height(78.dp).clip(RoundedCornerShape(7.dp))
+                                    .background(cardGray).padding(16.dp)
+                            ) {
+                                Column {
+                                    Row(
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            "任务进度",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = Color.Gray
+                                        )
+                                        Text(
+                                            "75%",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    LinearProgressIndicator(
+                                        progress = { 0.75f },
+                                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape)
+                                    )
+                                }
+                            }
+                        }
+
+
+                        item(span = { GridItemSpan(6) }) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(modifier = Modifier.weight(4f)) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(Color(0xFFFFF9C4)).clickable { }, contentAlignment = Alignment.Center) {
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Star, null); Text("收藏", style = MaterialTheme.typography.labelSmall) }
+                                            }
+                                            Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(cardGray).clickable { }, contentAlignment = Alignment.Center) {
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Settings, null); Text("设置", style = MaterialTheme.typography.labelSmall) }
+                                            }
+                                        }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(Color(0xFFE1F5FE)).clickable { }, contentAlignment = Alignment.Center) {
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Build, null); Text("勋章", style = MaterialTheme.typography.labelSmall) }
+                                            }
+                                            Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(cardGray).clickable {
+                                                activities.add(ActivityLog("抵达 WP-1", ActivityType.LIFE, Clock.System.now().toEpochMilliseconds()))
+                                            }, contentAlignment = Alignment.Center) {
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Build, null); Text("睡觉", style = MaterialTheme.typography.labelSmall) }
+                                            }
+                                        }
+                                    }
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = hoveredWaypointIndex != null && displayIndex != null,
+                                        enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
+                                        exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
+                                        modifier = Modifier.fillMaxSize()
+                                    ) {
+                                        Box(
+                                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(7.dp))
+                                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                                .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(7.dp))
+                                                .padding(16.dp)
+                                        ) {
+                                            AnimatedContent(
+                                                targetState = displayIndex,
+                                                transitionSpec = {
+                                                    if ((targetState ?: 0) > (initialState ?: 0))
+                                                        slideInVertically { it } + fadeIn() togetherWith slideOutVertically { -it } + fadeOut()
+                                                    else
+                                                        slideInVertically { -it } + fadeIn() togetherWith slideOutVertically { it } + fadeOut()
+                                                }
+                                            ) { target ->
+                                                if (target != null) {
+                                                    Column {
+                                                        Text("位置详情", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                                        Text("WP-$target", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                                        Spacer(Modifier.weight(1f))
+                                                        Text("坐标: ${30.123}, ${120.456}", style = MaterialTheme.typography.bodySmall)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                data class Waypoint(val id: Int, val distanceToNext: Float)
+                                val allWaypoints = remember { List(20) { i -> Waypoint(id = i + 1, distanceToNext = (50..300).random().toFloat()) } }
+                                var currentIndex by remember { mutableIntStateOf(1) }
+                                val nodePositions = remember { mutableMapOf<Int, Float>() }
+
+                                Box(
+                                    modifier = Modifier.weight(2.6f).fillMaxHeight().clip(RoundedCornerShape(7.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(7.dp))
+                                        .padding(8.dp)
+                                ) {
+                                    Row(modifier = Modifier.fillMaxSize()) {
+                                        Column(
+                                            modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 4.dp),
+                                            verticalArrangement = Arrangement.SpaceBetween,
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {
+                                                Text("NEXT WP", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
+                                                Text(text = "WP-${currentIndex.toString().padStart(2, '0')}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                                            }
+                                            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(75.dp)) {
+                                                val currentDistance = allWaypoints.getOrNull(currentIndex)?.distanceToNext ?: 0f
+                                                CircularProgressIndicator(progress = { 0.7f }, modifier = Modifier.fillMaxSize(), strokeWidth = 5.dp, trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                                                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center) {
+                                                    Text(text = currentDistance.toInt().toString(), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 1.em)
+                                                    Text(text = "m", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = Color.Gray, modifier = Modifier.padding(start = 1.dp, bottom = 2.dp))
+                                                }
+                                            }
+                                            IconButton(
+                                                onClick = {
+                                                    if (currentIndex < allWaypoints.size - 2) currentIndex++ else currentIndex = 1
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                },
+                                                modifier = Modifier.align(Alignment.Start).size(32.dp)
+                                            ) {
+                                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next", modifier = Modifier.size(26.dp))
+                                            }
+                                        }
+                                        Column(
+                                            modifier = Modifier.fillMaxHeight().padding(top = 6.dp, bottom = 6.dp, start = 8.dp, end = 8.dp)
+                                                .pointerInput(Unit) {
+                                                    awaitPointerEventScope {
+                                                        while (true) {
+                                                            val event = awaitPointerEvent()
+                                                            val pointer = event.changes.first()
+                                                            val pos = pointer.position
+                                                            val isInNodeZone = pos.x < 45.dp.toPx()
+                                                            if (pointer.pressed && isInNodeZone) {
+                                                                pointer.consume()
+                                                                val closest = nodePositions.minByOrNull { kotlin.math.abs(it.value - pos.y) }
+                                                                if (closest != null && kotlin.math.abs(closest.value - pos.y) < 60f) {
+                                                                    if (displayIndex != closest.key) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                    displayIndex = closest.key
+                                                                    hoveredWaypointIndex = closest.key
+                                                                }
+                                                            } else {
+                                                                if (hoveredWaypointIndex != null) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                hoveredWaypointIndex = null
+                                                                pointer.consume()
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            val wNext2 by animateFloatAsState(targetValue = ((allWaypoints.getOrNull(currentIndex + 1)?.distanceToNext ?: 100f) / 50f).coerceIn(0.5f, 5f), animationSpec = tween(450))
+                                            val wNext1 by animateFloatAsState(targetValue = ((allWaypoints.getOrNull(currentIndex)?.distanceToNext ?: 100f) / 50f).coerceIn(0.5f, 5f), animationSpec = tween(450))
+                                            val wPast  by animateFloatAsState(targetValue = ((allWaypoints.getOrNull(currentIndex - 1)?.distanceToNext ?: 50f) / 50f).coerceIn(0.5f, 2f), animationSpec = tween(450))
+                                            Box(modifier = Modifier.size(8.dp).border(1.dp, Color.Gray.copy(alpha = 0.5f), CircleShape).onGloballyPositioned { nodePositions[currentIndex + 2] = it.positionInParent().y })
+                                            Box(modifier = Modifier.width(3.dp).weight(wNext2).background(Color.Gray.copy(alpha = 0.3f)))
+                                            Box(modifier = Modifier.size(10.dp).border(1.dp, Color.Gray, CircleShape).background(MaterialTheme.colorScheme.surface, CircleShape).onGloballyPositioned { nodePositions[currentIndex + 1] = it.positionInParent().y })
+                                            Box(modifier = Modifier.width(3.dp).weight(wNext1).background(Color.Gray.copy(alpha = 0.3f)))
+                                            Box(modifier = Modifier.size(18.dp).border(2.dp, MaterialTheme.colorScheme.primary, CircleShape).padding(3.dp).background(MaterialTheme.colorScheme.primary, CircleShape).onGloballyPositioned { nodePositions[currentIndex] = it.positionInParent().y })
+                                            Box(modifier = Modifier.width(4.dp).weight(wPast).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)))
+                                            Box(modifier = Modifier.size(8.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape).onGloballyPositioned { nodePositions[currentIndex - 1] = it.positionInParent().y })
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+
+                        item(span = { GridItemSpan(6) }) {
+                            Text("最近动态", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, start = 4.dp, bottom = 4.dp))
+                        }
+
+                        item(span = { GridItemSpan(6) }) {
+                            val activeActivity by remember {
+                                derivedStateOf {
+                                    val layoutInfo = timelineState.layoutInfo
+                                    val visibleItems = layoutInfo.visibleItemsInfo
+                                    if (visibleItems.isEmpty()) return@derivedStateOf null
+                                    val containerWidth = layoutInfo.viewportSize.width
+                                    val triggerPoint = containerWidth - with(density) { (92.dp - 12.dp).toPx() }
+                                    visibleItems.minByOrNull { item ->
+                                        val itemCenter = item.offset + (item.size / 2)
+                                        kotlin.math.abs(itemCenter - triggerPoint)
+                                    }?.let { activities.getOrNull(it.index) }
+                                }
+                            }
+                            LaunchedEffect(activeActivity) {
+                                if (activeActivity != null && isTimelineActive) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            Column(
+                                modifier = Modifier.fillMaxWidth().pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                                            if (event.changes.first().pressed) isTimelineActive = true
+                                        }
+                                    }
+                                }
+                            ) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                                        .background(cardGray.copy(alpha = 0.3f)).padding(vertical = 12.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.align(Alignment.TopEnd).padding(end = 87.dp).size(24.dp).offset(y = (-19).dp)
+                                    )
+                                    LazyRow(
+                                        state = timelineState,
+                                        flingBehavior = snapBehavior,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentPadding = PaddingValues(horizontal = 16.dp)
+                                    ) {
+                                        itemsIndexed(items = activities, key = { _, item -> item.timestamp }) { index, activity ->
+                                            TimelineItem(
+                                                activity = activity,
+                                                isFirst = index == 0,
+                                                isLast = index == activities.size - 1,
+                                                isSelected = activeActivity == activity,
+                                                modifier = Modifier.animateItem()
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = isTimelineActive,
+                                    enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                                    exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
+                                ) {
+                                    AnimatedContent(
+                                        targetState = activeActivity,
+                                        transitionSpec = {
+                                            val initialIndex = activities.indexOf(initialState)
+                                            val targetIndex = activities.indexOf(targetState)
+                                            if (targetIndex > initialIndex)
+                                                (slideInHorizontally { it } + fadeIn()).togetherWith(slideOutHorizontally { -it } + fadeOut())
+                                            else
+                                                (slideInHorizontally { -it } + fadeIn()).togetherWith(slideOutHorizontally { it } + fadeOut())
+                                                    .using(SizeTransform(clip = false))
+                                        },
+                                        label = "ActivityDetail"
+                                    ) { target ->
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth().aspectRatio(3f),
+                                            colors = CardDefaults.cardColors(containerColor = Color(0xFFE8E8E8)),
+                                            shape = RoundedCornerShape(7.dp)
+                                        ) {
+                                            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Box(modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary, CircleShape), contentAlignment = Alignment.Center) {
+                                                    Icon(Icons.Default.Info, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                                                }
+                                                Spacer(Modifier.width(12.dp))
+                                                Column {
+                                                    Text(text = target?.title ?: "滑动查看动态", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                                    Text(text = if (target != null) "记录时间: ${target.timestamp.toFormattedTime()}" else "请左右滑动上方时间轴", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+
+                        item(span = { GridItemSpan(6) }) {
+                            Text(
+                                "飞机详情",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = 12.dp, start = 4.dp, bottom = 4.dp)
+                            )
+                        }
+
+
+
+                        item(span = { GridItemSpan(6) }) {
+                            AircraftSearchAndToggle(
+                                query = aircraftSearchQuery,
+                                onQueryChange = { aircraftSearchQuery = it },
+                                columnCount = aircraftColumnCount,
+                                onColumnChange = {
+                                    if (aircraftColumnCount != it) {
+                                        aircraftColumnCount = it
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    }
+                                }
+                            )
+                        }
+// --- 空状态提示 ---
+                        item(span = { GridItemSpan(6) }) {
+                            AnimatedVisibility(
+                                visible = filteredAircraft.isEmpty(),
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(72.dp)
+                                        .clip(RoundedCornerShape(7.dp))
+                                        .background(cardGray),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "未找到匹配的飞机",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Color.Gray
+                                    )
+                                }
+                            }
+                        }
+                        // ============================================================
+                        // 【核心修改：将列表区域作为整体进行淡入淡出左右滑动动画】
+                        // ============================================================
+                        item(span = { GridItemSpan(6) }) {
+                            AnimatedContent(
+                                targetState = aircraftColumnCount,
+                                transitionSpec = {
+                                    // 根据列数增加或减少决定滑动方向
+                                    if (targetState > initialState) {
+                                        // 1列 -> 2列：新页面从右边滑入，旧页面向左边滑出
+                                        (slideInHorizontally { it / 2 } + fadeIn(tween(300)))
+                                            .togetherWith(slideOutHorizontally { -it / 2 } + fadeOut(tween(300)))
+                                    } else {
+                                        // 2列 -> 1列：新页面从左边滑入，旧页面向右边滑出
+                                        (slideInHorizontally { -it / 2 } + fadeIn(tween(300)))
+                                            .togetherWith(slideOutHorizontally { it / 2 } + fadeOut(tween(300)))
+                                    }.using(SizeTransform(clip = false))
+                                },
+                                label = "AircraftListSwitch"
+                            ) { currentCols ->
+                                // 根据当前选中的列数，渲染完全不同的布局页面
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (currentCols == 1) {
+                                        // --- 单列页面布局 ---
+                                        filteredAircraft.forEach { aircraft ->
+                                            AircraftDetailCard(
+                                                aircraft = aircraft,
+                                                isCompact = false
+                                            )
+                                        }
+                                    } else {
+                                        // --- 双列页面布局 ---
+                                        val rows = filteredAircraft.chunked(2)
+                                        rows.forEach { rowItems ->
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                rowItems.forEach { aircraft ->
+                                                    Box(modifier = Modifier.weight(1f)) {
+                                                        AircraftDetailCard(
+                                                            aircraft = aircraft,
+                                                            isCompact = true
+                                                        )
+                                                    }
+                                                }
+                                                // 如果最后一行只有一个，补齐空间
+                                                if (rowItems.size < 2) {
+                                                    Spacer(modifier = Modifier.weight(1f))
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (filteredAircraft.isEmpty()) {
+                                        Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                                            Text("未找到匹配结果", color = Color.Gray)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 底部留白
+                        item(span = { GridItemSpan(6) }) {
+                            Spacer(Modifier.height(36.dp))
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(
+                        modifier = Modifier
+                            .weight(2f)
+                            .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                            .fillMaxSize()
+                    ) {
+                        Text(
+                            "全局地图",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        var mousePosition by remember { mutableStateOf<Offset?>(null) }
+
+                        val squareSize = 30f // 中心小正方形的边长
+                        val lineColor = Color.White // 白色在地图上通常更清晰
+                        val lineWidth = 1.dp
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(Color.LightGray)
+                                // 使用 pointerInput 替代直接的 onPointerEvent
+                                .pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            // 检查事件类型
+                                            when (event.type) {
+                                                PointerEventType.Move, PointerEventType.Enter -> {
+                                                    // 获取第一个手指或鼠标的位置
+                                                    mousePosition = event.changes.first().position
+                                                }
+                                                PointerEventType.Exit -> {
+                                                    mousePosition = null
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                .drawWithContent {
+                                    drawContent() // 绘制底层图片
+
+                                    mousePosition?.let { pos ->
+                                        val halfSize = squareSize / 2
+                                        val strokeWidth = lineWidth.toPx()
+
+                                        // 1. 绘制中心空心小正方形
+                                        drawRect(
+                                            color = lineColor,
+                                            topLeft = Offset(pos.x - halfSize, pos.y - halfSize),
+                                            size = Size(squareSize, squareSize),
+                                            style = Stroke(width = strokeWidth)
+                                        )
+
+                                        // 2. 绘制十字指示线 (跳过中间正方形区域)
+                                        // 垂直线 - 上段
+                                        drawLine(
+                                            color = lineColor,
+                                            start = Offset(pos.x, 0f),
+                                            end = Offset(pos.x, pos.y - halfSize),
+                                            strokeWidth = strokeWidth
+                                        )
+                                        // 垂直线 - 下段
+                                        drawLine(
+                                            color = lineColor,
+                                            start = Offset(pos.x, pos.y + halfSize),
+                                            end = Offset(pos.x, size.height),
+                                            strokeWidth = strokeWidth
+                                        )
+                                        // 水平线 - 左段
+                                        drawLine(
+                                            color = lineColor,
+                                            start = Offset(0f, pos.y),
+                                            end = Offset(pos.x - halfSize, pos.y),
+                                            strokeWidth = strokeWidth
+                                        )
+                                        // 水平线 - 右段
+                                        drawLine(
+                                            color = lineColor,
+                                            start = Offset(pos.x + halfSize, pos.y),
+                                            end = Offset(size.width, pos.y),
+                                            strokeWidth = strokeWidth
+                                        )
+                                    }
+                                }
+                        ) {
+                            Image(
+                                painter = painterResource(Res.drawable.map),
+                                contentDescription = "Aircraft Image",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                    }
                 }
+            } else {
+
             }
         }
     }
+}
+
+
+// DrawScope 的扩展：绘制十字线并在小方块区域留空，再绘制空心方块边框
+private fun DrawScope.drawCrossAndHollowSquare(
+    px: Float,
+    py: Float,
+    canvasWidth: Float,
+    canvasHeight: Float,
+    indicatorColor: Color,
+    strokeWidth: Float,
+    squarePxSize: Float
+) {
+    // 计算小方块矩形（以鼠标位置为中心）
+    val half = squarePxSize / 2f
+    val left = px - half
+    val top = py - half
+    val right = px + half
+    val bottom = py + half
+
+    // 画十字线：两条贯穿整个区域，但在方块区域不绘制
+    val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Square)
+
+    // 水平线：从左到方块左侧，从方块右侧到右
+    if (top < canvasHeight && bottom > 0f) {
+        // 左段
+        drawLine(
+            color = indicatorColor,
+            start = androidx.compose.ui.geometry.Offset(0f, py),
+            end = androidx.compose.ui.geometry.Offset(maxOf(0f, left), py),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Square
+        )
+        // 右段
+        drawLine(
+            color = indicatorColor,
+            start = androidx.compose.ui.geometry.Offset(minOf(canvasWidth, right), py),
+            end = androidx.compose.ui.geometry.Offset(canvasWidth, py),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Square
+        )
+    }
+
+    // 垂直线：从上到方块上侧，从方块下侧到下
+    if (left < canvasWidth && right > 0f) {
+        // 上段
+        drawLine(
+            color = indicatorColor,
+            start = androidx.compose.ui.geometry.Offset(px, 0f),
+            end = androidx.compose.ui.geometry.Offset(px, maxOf(0f, top)),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Square
+        )
+        // 下段
+        drawLine(
+            color = indicatorColor,
+            start = androidx.compose.ui.geometry.Offset(px, minOf(canvasHeight, bottom)),
+            end = androidx.compose.ui.geometry.Offset(px, canvasHeight),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Square
+        )
+    }
+
+    // 画空心小方块（只画边框，不填充）
+    drawRect(
+        color = indicatorColor,
+        topLeft = androidx.compose.ui.geometry.Offset(left, top),
+        size = Size(squarePxSize, squarePxSize),
+        style = stroke
+    )
 }
 // =====================================================
 // 新增 Data Class / Enum（文件顶层定义）
@@ -1068,8 +1903,11 @@ val AircraftStatus.statusColor: Color
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
-    val surfaceColor = MaterialTheme.colorScheme.surface
-    val cardGray = Color(0xFFE8E8E8)
+    //数据初始化
+    val activities = SampleData.activitiesList
+    val allAircraft = SampleData.aircraftList
+
+
     val haptic = LocalHapticFeedback.current
     var isTimelineActive by remember { mutableStateOf(false) }
 
@@ -1086,34 +1924,10 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
     var expandedStat by remember { mutableStateOf<String?>(null) }
     val gridSpacing = 4.dp
 
-    val activities = remember {
-        mutableStateListOf(
-            ActivityLog("任务已完成", ActivityType.TASK_COMPLETED, Clock.System.now().toEpochMilliseconds()),
-            ActivityLog("抵达 WP-1", ActivityType.WAYPOINT_REACHED, Clock.System.now().toEpochMilliseconds() + 1),
-            ActivityLog("获得勋章", ActivityType.MEDAL_EARNED, Clock.System.now().toEpochMilliseconds() + 2),
-            ActivityLog("系统更新", ActivityType.SYSTEM_UPDATE, Clock.System.now().toEpochMilliseconds() + 3),
-            ActivityLog("任务结束", ActivityType.TASK_END, Clock.System.now().toEpochMilliseconds() + 4),
-            ActivityLog("我将下班", ActivityType.TASK_END, Clock.System.now().toEpochMilliseconds() + 5),
-            ActivityLog("我将洗澡", ActivityType.LIFE, Clock.System.now().toEpochMilliseconds() + 6),
-            ActivityLog("我将睡觉", ActivityType.LIFE, Clock.System.now().toEpochMilliseconds() + 7),
-        )
-    }
-
     // ---- 飞机详情新增状态 ----
     var aircraftColumnCount by remember { mutableIntStateOf(1) }
     var aircraftSearchQuery by remember { mutableStateOf("") }
-    val allAircraft = remember {
-        listOf(
-            AircraftInfo("AC-001", "歼-20",  "空中侦察", 39.9042, 116.4074, 8500,  1200, 0.82f, 0.95f, AircraftStatus.ACTIVE),
-            AircraftInfo("AC-002", "运-20",  "物资运输", 31.2304, 121.4737, 6000,  780,  0.65f, 0.88f, AircraftStatus.ACTIVE),
-            AircraftInfo("AC-003", "直-20",  "搜索救援", 23.1291, 113.2644, 1200,  260,  0.91f, 0.72f, AircraftStatus.STANDBY),
-            AircraftInfo("AC-004", "歼-16",  "对地打击", 22.5431, 114.0579, 9000,  1400, 0.43f, 0.81f, AircraftStatus.ACTIVE),
-            AircraftInfo("AC-005", "运-9",   "电子战",   30.5728, 104.0668, 7500,  620,  0.28f, 0.60f, AircraftStatus.MAINTENANCE),
-            AircraftInfo("AC-006", "歼-15",  "海上巡逻", 29.8683, 121.5440, 5000,  1100, 0.75f, 0.90f, AircraftStatus.ACTIVE),
-            AircraftInfo("AC-007", "直-8",   "人员投送", 25.0453, 102.7100, 2500,  280,  0.55f, 0.66f, AircraftStatus.STANDBY),
-            AircraftInfo("AC-008", "轰-6K",  "远程轰炸", 36.0611, 103.8343, 10000, 900,  0.60f, 0.77f, AircraftStatus.ACTIVE),
-        )
-    }
+
     val filteredAircraft by remember {
         derivedStateOf {
             val q = aircraftSearchQuery.trim()
@@ -1167,8 +1981,10 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
         }
     )
 
+    val cardGray = Color(0xFFE8E8E8)
     val colorA = Color(0xFFFFEBEE)
     val colorB = Color(0xFFE3F2FD)
+    val surfaceColor = MaterialTheme.colorScheme.surface
     val animatedDetailColor by animateColorAsState(
         targetValue = when (expandedStat) {
             "A"  -> colorA
@@ -1247,8 +2063,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                 val bottomPadding by animateDpAsState(targetValue = if (isASelected) 1.dp else 7.dp, animationSpec = tween(300), label = "paddingA")
                                 val startPadding by animateDpAsState(targetValue = if (isASelected) 16.dp else 8.dp, animationSpec = tween(300), label = "startPaddingA")
                                 StatCard(
-                                    label = "正在航行", value = "05 / 16", icon = Icons.Default.Favorite,
-                                    tint = colorA, containerColor = animatedColorA,
+                                    label = "正在航行", value = "05 / 16", icon = Icons.Default.Favorite, containerColor = animatedColorA,
                                     onClick = { expandedStat = if (isASelected) null else "A"; haptic.performHapticFeedback(HapticFeedbackType.ContextClick) },
                                     shape = RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp, bottomStart = bottomCorner, bottomEnd = bottomCorner),
                                     ratio = compensatedRatioA, bottomPadding = bottomPadding, startPadding = startPadding
@@ -1259,8 +2074,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                 val bottomPadding by animateDpAsState(targetValue = if (isBSelected) 1.dp else 7.dp, animationSpec = tween(300), label = "paddingB")
                                 val startPadding by animateDpAsState(targetValue = if (isASelected) 16.dp else 8.dp, animationSpec = tween(300), label = "startPaddingB")
                                 StatCard(
-                                    label = "最低续航", value = "12h 32m", icon = Icons.Default.Person,
-                                    tint = colorB, containerColor = animatedColorB,
+                                    label = "最低续航", value = "12h 32m", icon = Icons.Default.Person, containerColor = animatedColorB,
                                     onClick = { expandedStat = if (isBSelected) null else "B"; haptic.performHapticFeedback(HapticFeedbackType.ContextClick) },
                                     shape = RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp, bottomStart = bottomCorner, bottomEnd = bottomCorner),
                                     ratio = compensatedRatioB, bottomPadding = bottomPadding, startPadding = startPadding
@@ -1723,45 +2537,6 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
     }
 }
 
-@Composable
-fun AnimatedAircraftItem(
-    aircraft: AircraftInfo,
-    isCompact: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Box(modifier = modifier) {
-        AnimatedContent(
-            targetState = isCompact,
-            transitionSpec = {
-
-                // ✅ 1列 -> 2列：向左滑入
-                if (targetState) {
-                    (slideInHorizontally { width -> width / 3 } + fadeIn())
-                        .togetherWith(
-                            slideOutHorizontally { width -> -width / 3 } + fadeOut()
-                        )
-                }
-                // ✅ 2列 -> 1列：向右滑入
-                else {
-                    (slideInHorizontally { width -> -width / 3 } + fadeIn())
-                        .togetherWith(
-                            slideOutHorizontally { width -> width / 3 } + fadeOut()
-                        )
-                }.using(
-                    SizeTransform(clip = false)
-                )
-            },
-            label = "AircraftLayoutSwitch_${aircraft.id}"
-        ) { compact ->
-
-            AircraftDetailCard(
-                aircraft = aircraft,
-                isCompact = compact
-            )
-        }
-    }
-}
-
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun AircraftDetailCard(
@@ -1914,12 +2689,12 @@ fun AircraftDetailCard(
                         }
                         Column {
                             Text(
-                                text = aircraft.model,
+                                text = aircraft.id,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = aircraft.id,
+                                text = aircraft.model,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.Gray
                             )
@@ -2556,7 +3331,6 @@ fun StatCard(
     label: String,
     value: String,
     icon: ImageVector,
-    tint: Color,
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(7.dp),
     containerColor: Color = Color(0xFFE8E8E8),
@@ -2593,8 +3367,7 @@ fun StatCard(
                 contentDescription = null,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .size(30.dp),
-                tint = tint.copy(alpha = 0.5f)
+                    .size(30.dp)
             )
 
             Column(
