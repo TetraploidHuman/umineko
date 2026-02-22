@@ -6,18 +6,26 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDp
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
@@ -28,6 +36,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.with
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -41,16 +51,19 @@ import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -59,6 +72,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.*
 import androidx.compose.material3.FloatingActionButtonDefaults.elevation
 import androidx.compose.runtime.*
@@ -72,6 +86,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -101,6 +116,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.PI
 import kotlin.math.atan2
+import kotlin.math.max
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.time.TimeSource
@@ -1013,6 +1029,42 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
         }
     }
 }
+// =====================================================
+// 新增 Data Class / Enum（文件顶层定义）
+// =====================================================
+
+data class AircraftInfo(
+    val id: String,
+    val model: String,
+    val mission: String,
+    val lat: Double,
+    val lon: Double,
+    val altitude: Int,
+    val speed: Int,
+    val fuel: Float,
+    val signalStrength: Float, // 0.0 - 1.0
+    val status: AircraftStatus
+)
+
+enum class AircraftStatus(val label: String) {
+    ACTIVE("执行中"),
+    STANDBY("待命"),
+    MAINTENANCE("维护中")
+}
+
+val AircraftStatus.statusColor: Color
+    get() = when (this) {
+        AircraftStatus.ACTIVE      -> Color(0xFF4CAF50)
+        AircraftStatus.STANDBY     -> Color(0xFF2196F3)
+        AircraftStatus.MAINTENANCE -> Color(0xFFFF9800)
+    }
+
+
+
+// =====================================================
+// 改进后的 ContentAreaMobile（完整函数）
+// =====================================================
+
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
@@ -1020,12 +1072,10 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
     val cardGray = Color(0xFFE8E8E8)
     val haptic = LocalHapticFeedback.current
     var isTimelineActive by remember { mutableStateOf(false) }
-    // --- 状态追踪 ---
-    // 控制外部 Card 的可见性
+
     var hoveredWaypointIndex by remember { mutableStateOf<Int?>(null) }
-    // 控制内部文字显示的内容，初始为 null 确保每次重新进入时不产生滚动动画
     var displayIndex by remember { mutableStateOf<Int?>(null) }
-    // 当用户松开手指，Card 消失后的 300ms（动画结束）清空 displayIndex
+
     LaunchedEffect(hoveredWaypointIndex) {
         if (hoveredWaypointIndex == null) {
             delay(300)
@@ -1033,17 +1083,47 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
         }
     }
 
+    var expandedStat by remember { mutableStateOf<String?>(null) }
+    val gridSpacing = 4.dp
+
     val activities = remember {
         mutableStateListOf(
-            ActivityLog("任务已完成", ActivityType.TASK_COMPLETED,Clock.System.now().toEpochMilliseconds()),
+            ActivityLog("任务已完成", ActivityType.TASK_COMPLETED, Clock.System.now().toEpochMilliseconds()),
             ActivityLog("抵达 WP-1", ActivityType.WAYPOINT_REACHED, Clock.System.now().toEpochMilliseconds() + 1),
             ActivityLog("获得勋章", ActivityType.MEDAL_EARNED, Clock.System.now().toEpochMilliseconds() + 2),
-            ActivityLog("系统更新", ActivityType.SYSTEM_UPDATE,Clock.System.now().toEpochMilliseconds() + 3),
+            ActivityLog("系统更新", ActivityType.SYSTEM_UPDATE, Clock.System.now().toEpochMilliseconds() + 3),
             ActivityLog("任务结束", ActivityType.TASK_END, Clock.System.now().toEpochMilliseconds() + 4),
             ActivityLog("我将下班", ActivityType.TASK_END, Clock.System.now().toEpochMilliseconds() + 5),
-            ActivityLog("我将洗澡", ActivityType.LIFE,Clock.System.now().toEpochMilliseconds() + 6),
+            ActivityLog("我将洗澡", ActivityType.LIFE, Clock.System.now().toEpochMilliseconds() + 6),
             ActivityLog("我将睡觉", ActivityType.LIFE, Clock.System.now().toEpochMilliseconds() + 7),
         )
+    }
+
+    // ---- 飞机详情新增状态 ----
+    var aircraftColumnCount by remember { mutableIntStateOf(1) }
+    var aircraftSearchQuery by remember { mutableStateOf("") }
+    val allAircraft = remember {
+        listOf(
+            AircraftInfo("AC-001", "歼-20",  "空中侦察", 39.9042, 116.4074, 8500,  1200, 0.82f, 0.95f, AircraftStatus.ACTIVE),
+            AircraftInfo("AC-002", "运-20",  "物资运输", 31.2304, 121.4737, 6000,  780,  0.65f, 0.88f, AircraftStatus.ACTIVE),
+            AircraftInfo("AC-003", "直-20",  "搜索救援", 23.1291, 113.2644, 1200,  260,  0.91f, 0.72f, AircraftStatus.STANDBY),
+            AircraftInfo("AC-004", "歼-16",  "对地打击", 22.5431, 114.0579, 9000,  1400, 0.43f, 0.81f, AircraftStatus.ACTIVE),
+            AircraftInfo("AC-005", "运-9",   "电子战",   30.5728, 104.0668, 7500,  620,  0.28f, 0.60f, AircraftStatus.MAINTENANCE),
+            AircraftInfo("AC-006", "歼-15",  "海上巡逻", 29.8683, 121.5440, 5000,  1100, 0.75f, 0.90f, AircraftStatus.ACTIVE),
+            AircraftInfo("AC-007", "直-8",   "人员投送", 25.0453, 102.7100, 2500,  280,  0.55f, 0.66f, AircraftStatus.STANDBY),
+            AircraftInfo("AC-008", "轰-6K",  "远程轰炸", 36.0611, 103.8343, 10000, 900,  0.60f, 0.77f, AircraftStatus.ACTIVE),
+        )
+    }
+    val filteredAircraft by remember {
+        derivedStateOf {
+            val q = aircraftSearchQuery.trim()
+            if (q.isEmpty()) allAircraft
+            else allAircraft.filter {
+                it.id.contains(q, ignoreCase = true) ||
+                        it.model.contains(q, ignoreCase = true) ||
+                        it.mission.contains(q, ignoreCase = true)
+            }
+        }
     }
 
     val timelineState = rememberLazyListState()
@@ -1053,70 +1133,55 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
             val layoutInfo = timelineState.layoutInfo
             val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()?.index
             val totalItems = layoutInfo.totalItemsCount
-
             if (totalItems == 0) return@derivedStateOf false
-
-            // 允许有 1 个误差（更自然）
             lastVisibleItem != null && lastVisibleItem >= totalItems - 2
         }
     }
     LaunchedEffect(activities.size) {
         if (activities.size > 1 && isNearEnd) {
-
-            val distance = with(density) {
-                (95.dp + 16.dp).toPx()
-            }
+            val distance = with(density) { (95.dp + 16.dp).toPx() }
             timelineState.animateScrollBy(
                 value = distance,
-                animationSpec = spring(
-                    stiffness = Spring.StiffnessLow,
-                    dampingRatio = Spring.DampingRatioNoBouncy
-                )
+                animationSpec = spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy)
             )
         }
     }
-    // 在 ContentAreaMobile 内部
 
-// 计算磁吸对齐的偏移量
-// 我们希望 Item 的中心对齐到：容器宽度 - 92dp (箭头位置)
     val snapBehavior = rememberSnapFlingBehavior(
         snapLayoutInfoProvider = remember(timelineState) {
             object : SnapLayoutInfoProvider {
-                // 核心修正：使用 calculateSnapOffset 替代旧方法
                 override fun calculateSnapOffset(velocity: Float): Float {
                     val layoutInfo = timelineState.layoutInfo
                     val visibleItems = layoutInfo.visibleItemsInfo
                     if (visibleItems.isEmpty()) return 0f
-
                     val containerWidth = layoutInfo.viewportSize.width
-                    // 判定点在屏幕上的绝对位置（箭头位置）
                     val triggerPoint = containerWidth - with(density) { (92.dp - 12.dp).toPx() }
-
-                    // 找到中心点离判定点最近的 Item
                     val closestItem = visibleItems.minByOrNull { item ->
                         val itemCenter = item.offset + (item.size / 2)
                         kotlin.math.abs(itemCenter - triggerPoint)
                     } ?: return 0f
-
-                    // 计算该 Item 中心距离判定点的物理位移
                     val currentItemCenter = closestItem.offset + (closestItem.size / 2)
-
-                    // 返回值：正数表示向右修正，负数表示向左修正
                     return currentItemCenter - triggerPoint
                 }
             }
         }
     )
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(surfaceColor)
-    ) {
+    val colorA = Color(0xFFFFEBEE)
+    val colorB = Color(0xFFE3F2FD)
+    val animatedDetailColor by animateColorAsState(
+        targetValue = when (expandedStat) {
+            "A"  -> colorA
+            "B"  -> colorB
+            else -> cardGray
+        },
+        label = "detailColor"
+    )
+
+    Column(modifier = modifier.fillMaxSize().background(surfaceColor)) {
         AnimatedContent(
             targetState = pageIndex,
             transitionSpec = {
-                // 定义动画：新页面从底部滑入 + 淡入，旧页面向上滑出 + 淡出
                 (slideInVertically { height -> height } + fadeIn(animationSpec = tween(400)))
                     .togetherWith(slideOutVertically { height -> -height } + fadeOut(animationSpec = tween(400)))
             },
@@ -1131,11 +1196,7 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
                                 val change = event.changes.first()
-
-                                if (change.pressed) {
-                                    isTimelineActive = false
-                                }
-
+                                if (change.pressed) isTimelineActive = false
                             }
                         }
                     },
@@ -1144,6 +1205,9 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (targetPageIndex == 0) {
+                    // =========================================
+                    // 原有区域（保持不变）
+                    // =========================================
                     item(span = { GridItemSpan(6) }) {
                         Text(
                             "基本进度",
@@ -1152,41 +1216,123 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                         )
                     }
 
-                    // 1. 统计数据卡片
-                    item(span = { GridItemSpan(3) }) {
-                        StatCard(
-                            "正在航行",
-                            "05 / 16",
-                            Icons.Default.Favorite,
-                            Color(0xFFFFEBEE)
+                    item(span = { GridItemSpan(6) }) {
+                        val anyExpanded = expandedStat != null
+                        val isASelected = expandedStat == "A"
+                        val isBSelected = expandedStat == "B"
+                        val animatedColorA by animateColorAsState(targetValue = if (isASelected) colorA else cardGray)
+                        val animatedColorB by animateColorAsState(targetValue = if (isBSelected) colorB else cardGray)
+                        val weightA by animateFloatAsState(
+                            targetValue = when { !anyExpanded -> 1f; isASelected -> 0.7f; else -> 1.3f },
+                            animationSpec = tween(300), label = "weightA"
                         )
-                    }
-                    item(span = { GridItemSpan(3) }) {
-                        StatCard(
-                            label = "最低续航",
-                            value = "12h 32min",
-                            icon = Icons.Default.Person,
-                            tint = Color(0xFFE3F2FD)
+                        val weightB by animateFloatAsState(
+                            targetValue = when { !anyExpanded -> 1f; isBSelected -> 0.7f; else -> 1.3f },
+                            animationSpec = tween(300), label = "weightB"
                         )
+                        val heightFactorA by animateFloatAsState(
+                            targetValue = when { !anyExpanded -> 1.5f; else -> 3.1f },
+                            animationSpec = tween(300), label = "heightFactorA"
+                        )
+                        val heightFactorB by animateFloatAsState(
+                            targetValue = when { !anyExpanded -> 1.5f; else -> 3.1f },
+                            animationSpec = tween(300), label = "heightFactorB"
+                        )
+                        val compensatedRatioA = heightFactorA * weightA
+                        val compensatedRatioB = heightFactorB * weightB
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(modifier = Modifier.weight(weightA)) {
+                                val bottomCorner by animateDpAsState(targetValue = if (isASelected) 0.dp else 7.dp, label = "cornerA")
+                                val bottomPadding by animateDpAsState(targetValue = if (isASelected) 1.dp else 7.dp, animationSpec = tween(300), label = "paddingA")
+                                val startPadding by animateDpAsState(targetValue = if (isASelected) 16.dp else 8.dp, animationSpec = tween(300), label = "startPaddingA")
+                                StatCard(
+                                    label = "正在航行", value = "05 / 16", icon = Icons.Default.Favorite,
+                                    tint = colorA, containerColor = animatedColorA,
+                                    onClick = { expandedStat = if (isASelected) null else "A"; haptic.performHapticFeedback(HapticFeedbackType.ContextClick) },
+                                    shape = RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp, bottomStart = bottomCorner, bottomEnd = bottomCorner),
+                                    ratio = compensatedRatioA, bottomPadding = bottomPadding, startPadding = startPadding
+                                )
+                            }
+                            Box(modifier = Modifier.weight(weightB)) {
+                                val bottomCorner by animateDpAsState(targetValue = if (isBSelected) 0.dp else 7.dp, label = "cornerB")
+                                val bottomPadding by animateDpAsState(targetValue = if (isBSelected) 1.dp else 7.dp, animationSpec = tween(300), label = "paddingB")
+                                val startPadding by animateDpAsState(targetValue = if (isASelected) 16.dp else 8.dp, animationSpec = tween(300), label = "startPaddingB")
+                                StatCard(
+                                    label = "最低续航", value = "12h 32m", icon = Icons.Default.Person,
+                                    tint = colorB, containerColor = animatedColorB,
+                                    onClick = { expandedStat = if (isBSelected) null else "B"; haptic.performHapticFeedback(HapticFeedbackType.ContextClick) },
+                                    shape = RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp, bottomStart = bottomCorner, bottomEnd = bottomCorner),
+                                    ratio = compensatedRatioB, bottomPadding = bottomPadding, startPadding = startPadding
+                                )
+                            }
+                        }
                     }
 
-                    // 2. 进度条卡片
+                    item(span = { GridItemSpan(6) }) {
+                        AnimatedVisibility(
+                            visible = expandedStat != null,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut(),
+                            modifier = Modifier.fillMaxWidth().offset(y = -gridSpacing),
+                        ) {
+                            val isLeftExpanded = expandedStat == "A"
+                            DetailCard(
+                                modifier = Modifier.fillMaxWidth().aspectRatio(2.6f),
+                                containerColor = animatedDetailColor,
+                                shape = if (isLeftExpanded)
+                                    RoundedCornerShape(topStart = 0.dp, topEnd = 7.dp, bottomStart = 7.dp, bottomEnd = 7.dp)
+                                else
+                                    RoundedCornerShape(topStart = 7.dp, topEnd = 0.dp, bottomStart = 7.dp, bottomEnd = 7.dp),
+                                content = {
+                                    Text(
+                                        text = if (expandedStat == "A") "航行状态" else "续航状态",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    val mockData = remember { List(48) { FlightStatus.entries.toTypedArray().random() } }
+                                    AnimatedContent(
+                                        targetState = expandedStat,
+                                        transitionSpec = {
+                                            if (targetState == null || initialState == null) {
+                                                fadeIn() togetherWith fadeOut()
+                                            } else {
+                                                val isForward = targetState == "B"
+                                                if (isForward) {
+                                                    slideInHorizontally { width -> -width } + fadeIn() togetherWith
+                                                            slideOutHorizontally { width -> width } + fadeOut()
+                                                } else {
+                                                    slideInHorizontally { width -> width } + fadeIn() togetherWith
+                                                            slideOutHorizontally { width -> -width } + fadeOut()
+                                                }.using(SizeTransform(clip = false))
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth().weight(1f)
+                                    ) { target ->
+                                        if (target == "A") {
+                                            FlightStatusSection(data = mockData, modifier = Modifier.fillMaxWidth().weight(1f))
+                                        } else {
+                                            val mockAircraft = remember {
+                                                List(32) { index -> AircraftEndurance(id = "AC-${index + 1}", enduranceMinutes = (400..900).random()) }
+                                            }
+                                            AircraftEnduranceSection(data = mockAircraft, modifier = Modifier.fillMaxWidth().weight(1f))
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+
                     item(span = { GridItemSpan(6) }) {
                         Box(
                             modifier = Modifier.fillMaxWidth().height(78.dp).clip(RoundedCornerShape(7.dp))
                                 .background(cardGray).padding(16.dp)
                         ) {
                             Column {
-                                Row(
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                                     Text("任务进度", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
-                                    Text(
-                                        "75%",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Text("75%", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 LinearProgressIndicator(
@@ -1205,78 +1351,32 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                         )
                     }
 
-                    // 3. 核心交互区域
                     item(span = { GridItemSpan(6) }) {
                         Row(
                             modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            // --- 左侧：功能卡片 + 弹出位置 Card ---
                             Box(modifier = Modifier.weight(4f)) {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Box(
-                                            modifier = Modifier.weight(1f).aspectRatio(1f)
-                                                .clip(RoundedCornerShape(7.dp)).background(Color(0xFFFFF9C4))
-                                                .clickable { },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Icon(
-                                                    Icons.Default.Star,
-                                                    null
-                                                ); Text("收藏", style = MaterialTheme.typography.labelSmall)
-                                            }
+                                        Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(Color(0xFFFFF9C4)).clickable { }, contentAlignment = Alignment.Center) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Star, null); Text("收藏", style = MaterialTheme.typography.labelSmall) }
                                         }
-                                        Box(
-                                            modifier = Modifier.weight(1f).aspectRatio(1f)
-                                                .clip(RoundedCornerShape(7.dp)).background(cardGray).clickable { },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Icon(
-                                                    Icons.Default.Settings,
-                                                    null
-                                                ); Text("设置", style = MaterialTheme.typography.labelSmall)
-                                            }
+                                        Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(cardGray).clickable { }, contentAlignment = Alignment.Center) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Settings, null); Text("设置", style = MaterialTheme.typography.labelSmall) }
                                         }
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Box(
-                                            modifier = Modifier.weight(1f).aspectRatio(1f)
-                                                .clip(RoundedCornerShape(7.dp)).background(Color(0xFFE1F5FE))
-                                                .clickable { },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Icon(
-                                                    Icons.Default.Build,
-                                                    null
-                                                ); Text("勋章", style = MaterialTheme.typography.labelSmall)
-                                            }
+                                        Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(Color(0xFFE1F5FE)).clickable { }, contentAlignment = Alignment.Center) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Build, null); Text("勋章", style = MaterialTheme.typography.labelSmall) }
                                         }
-                                        Box(
-                                            modifier = Modifier.weight(1f).aspectRatio(1f)
-                                                .clip(RoundedCornerShape(7.dp)).background(cardGray).clickable {
-                                                activities.add(
-                                                    ActivityLog(
-                                                        "抵达 WP-1",
-                                                        ActivityType.LIFE, Clock.System.now().toEpochMilliseconds()
-                                                    )
-                                                )
-                                            }, contentAlignment = Alignment.Center
-                                        ) {
-                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Icon(
-                                                    Icons.Default.Build,
-                                                    null
-                                                ); Text("睡觉", style = MaterialTheme.typography.labelSmall)
-                                            }
+                                        Box(modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(7.dp)).background(cardGray).clickable {
+                                            activities.add(ActivityLog("抵达 WP-1", ActivityType.LIFE, Clock.System.now().toEpochMilliseconds()))
+                                        }, contentAlignment = Alignment.Center) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Build, null); Text("睡觉", style = MaterialTheme.typography.labelSmall) }
                                         }
                                     }
                                 }
-
-                                // --- 位置信息 Card ---
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = hoveredWaypointIndex != null && displayIndex != null,
                                     enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
@@ -1292,36 +1392,18 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                         AnimatedContent(
                                             targetState = displayIndex,
                                             transitionSpec = {
-                                                // 如果是从 null 变到数字（即刚开始触摸），不滚动，只淡入
-//                                            if (initialState == null) {
-//                                                fadeIn() togetherWith fadeOut()
-//                                            } else {
-                                                // 只有在数字之间切换时才执行上下滚动
-                                                if ((targetState ?: 0) > (initialState ?: 0)) {
+                                                if ((targetState ?: 0) > (initialState ?: 0))
                                                     slideInVertically { it } + fadeIn() togetherWith slideOutVertically { -it } + fadeOut()
-                                                } else {
+                                                else
                                                     slideInVertically { -it } + fadeIn() togetherWith slideOutVertically { it } + fadeOut()
-                                                }
-                                                //}.using(SizeTransform(clip = false))
                                             }
                                         ) { target ->
                                             if (target != null) {
                                                 Column {
-                                                    Text(
-                                                        "位置详情",
-                                                        style = MaterialTheme.typography.labelLarge,
-                                                        color = MaterialTheme.colorScheme.primary
-                                                    )
-                                                    Text(
-                                                        "WP-$target",
-                                                        style = MaterialTheme.typography.headlineSmall,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
+                                                    Text("位置详情", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                                    Text("WP-$target", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                                                     Spacer(Modifier.weight(1f))
-                                                    Text(
-                                                        "坐标: ${30.123}, ${120.456}",
-                                                        style = MaterialTheme.typography.bodySmall
-                                                    )
+                                                    Text("坐标: ${30.123}, ${120.456}", style = MaterialTheme.typography.bodySmall)
                                                 }
                                             }
                                         }
@@ -1329,231 +1411,100 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                 }
                             }
 
-                            // --- 右侧：航线节点链 ---
                             data class Waypoint(val id: Int, val distanceToNext: Float)
-
-                            val allWaypoints = remember {
-                                List(20) { i ->
-                                    Waypoint(
-                                        id = i + 1,
-                                        distanceToNext = (50..300).random().toFloat()
-                                    )
-                                }
-                            }
+                            val allWaypoints = remember { List(20) { i -> Waypoint(id = i + 1, distanceToNext = (50..300).random().toFloat()) } }
                             var currentIndex by remember { mutableIntStateOf(1) }
                             val nodePositions = remember { mutableMapOf<Int, Float>() }
 
                             Box(
-                                modifier = Modifier
-                                    .weight(2.6f).fillMaxHeight().clip(RoundedCornerShape(7.dp))
+                                modifier = Modifier.weight(2.6f).fillMaxHeight().clip(RoundedCornerShape(7.dp))
                                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                                     .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(7.dp))
                                     .padding(8.dp)
-
                             ) {
                                 Row(modifier = Modifier.fillMaxSize()) {
-
-
                                     Column(
                                         modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 4.dp),
                                         verticalArrangement = Arrangement.SpaceBetween,
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.Start,
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text(
-                                                "NEXT WP",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontSize = 9.sp,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            Text(
-                                                text = "WP-${currentIndex.toString().padStart(2,'0')}",
-                                                style = MaterialTheme.typography.titleLarge,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
+                                        Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {
+                                            Text("NEXT WP", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
+                                            Text(text = "WP-${currentIndex.toString().padStart(2, '0')}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
                                         }
-
-                                        // 距离显示
-                                        Box(
-                                            contentAlignment = Alignment.Center,
-                                            modifier = Modifier.size(75.dp) // 稍微加大一点容器，防止数字大时显得拥挤
-                                        ) {
-                                            val currentDistance =
-                                                allWaypoints.getOrNull(currentIndex)?.distanceToNext ?: 0f
-
-                                            CircularProgressIndicator(
-                                                progress = { 0.7f },
-                                                modifier = Modifier.fillMaxSize(),
-                                                strokeWidth = 5.dp,
-                                                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                                            )
-
-                                            // 数字与单位
-                                            Row(
-                                                verticalAlignment = Alignment.Bottom, // 关键：让单位对齐数字底部
-                                                horizontalArrangement = Arrangement.Center
-                                            ) {
-                                                Text(
-                                                    text = currentDistance.toInt().toString(),
-                                                    fontSize = 20.sp, // 使用更大的字体
-                                                    fontWeight = FontWeight.ExtraBold, // 加粗
-                                                    lineHeight = 1.em // 紧凑行高
-                                                )
-                                                Text(
-                                                    text = "m",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontSize = 9.sp, // 保持单位较小
-                                                    color = Color.Gray,
-                                                    modifier = Modifier.padding(start = 1.dp, bottom = 2.dp) // 微调单位位置
-                                                )
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(75.dp)) {
+                                            val currentDistance = allWaypoints.getOrNull(currentIndex)?.distanceToNext ?: 0f
+                                            CircularProgressIndicator(progress = { 0.7f }, modifier = Modifier.fillMaxSize(), strokeWidth = 5.dp, trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                                            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center) {
+                                                Text(text = currentDistance.toInt().toString(), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 1.em)
+                                                Text(text = "m", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = Color.Gray, modifier = Modifier.padding(start = 1.dp, bottom = 2.dp))
                                             }
                                         }
-
-                                        // 抵达按钮
                                         IconButton(
                                             onClick = {
-                                                if (currentIndex < allWaypoints.size - 2) currentIndex++ else currentIndex =
-                                                    1
+                                                if (currentIndex < allWaypoints.size - 2) currentIndex++ else currentIndex = 1
                                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                             },
-                                            modifier = Modifier
-                                                .align(Alignment.Start) // 如果在 Column 里，靠右对齐
-                                                .size(32.dp)
+                                            modifier = Modifier.align(Alignment.Start).size(32.dp)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                                contentDescription = "Next",
-                                                modifier = Modifier.size(26.dp),
-                                            )
+                                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next", modifier = Modifier.size(26.dp))
                                         }
                                     }
                                     Column(
-                                        modifier = Modifier.fillMaxHeight()
-                                            .padding(top = 6.dp, bottom = 6.dp, start = 8.dp, end = 8.dp).pointerInput(Unit) {
+                                        modifier = Modifier.fillMaxHeight().padding(top = 6.dp, bottom = 6.dp, start = 8.dp, end = 8.dp)
+                                            .pointerInput(Unit) {
                                                 awaitPointerEventScope {
                                                     while (true) {
                                                         val event = awaitPointerEvent()
                                                         val pointer = event.changes.first()
                                                         val pos = pointer.position
                                                         val isInNodeZone = pos.x < 45.dp.toPx()
-
                                                         if (pointer.pressed && isInNodeZone) {
                                                             pointer.consume()
-                                                            val closest =
-                                                                nodePositions.minByOrNull { kotlin.math.abs(it.value - pos.y) }
+                                                            val closest = nodePositions.minByOrNull { kotlin.math.abs(it.value - pos.y) }
                                                             if (closest != null && kotlin.math.abs(closest.value - pos.y) < 60f) {
-                                                                // 先设置索引，再设置可见性，确保 Card 弹出时内容已就绪
-                                                                if (displayIndex != closest.key) {
-                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                                }
+                                                                if (displayIndex != closest.key) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                                 displayIndex = closest.key
                                                                 hoveredWaypointIndex = closest.key
-
                                                             }
                                                         } else {
-                                                            if (hoveredWaypointIndex != null) {
-                                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                            }
+                                                            if (hoveredWaypointIndex != null) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                             hoveredWaypointIndex = null
                                                             pointer.consume()
-                                                            // 注意：此处不立即清空 displayIndex，由 LaunchedEffect 处理
                                                         }
                                                     }
                                                 }
                                             },
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
-                                        // 计算各段距离权重 (增加平滑动画)
-                                        val wNext2 by animateFloatAsState(
-                                            targetValue = ((allWaypoints.getOrNull(currentIndex + 1)?.distanceToNext
-                                                ?: 100f) / 50f).coerceIn(0.5f, 5f),
-                                            animationSpec = tween(450) // 这里的时长决定了节点挪动的速度
-                                        )
-                                        val wNext1 by animateFloatAsState(
-                                            targetValue = ((allWaypoints.getOrNull(currentIndex)?.distanceToNext
-                                                ?: 100f) / 50f).coerceIn(0.5f, 5f),
-                                            animationSpec = tween(450)
-                                        )
-                                        val wPast by animateFloatAsState(
-                                            targetValue = ((allWaypoints.getOrNull(currentIndex - 1)?.distanceToNext
-                                                ?: 50f) / 50f).coerceIn(0.5f, 2f),
-                                            animationSpec = tween(450)
-                                        )
-
-                                        Box(
-                                            modifier = Modifier.size(8.dp)
-                                                .border(1.dp, Color.Gray.copy(alpha = 0.5f), CircleShape)
-                                                .onGloballyPositioned {
-                                                    nodePositions[currentIndex + 2] = it.positionInParent().y
-                                                })
-                                        Box(
-                                            modifier = Modifier.width(3.dp).weight(wNext2)
-                                                .background(Color.Gray.copy(alpha = 0.3f))
-                                        )
-                                        Box(
-                                            modifier = Modifier.size(10.dp).border(1.dp, Color.Gray, CircleShape)
-                                                .background(MaterialTheme.colorScheme.surface, CircleShape)
-                                                .onGloballyPositioned {
-                                                    nodePositions[currentIndex + 1] = it.positionInParent().y
-                                                })
-                                        Box(
-                                            modifier = Modifier.width(3.dp).weight(wNext1)
-                                                .background(Color.Gray.copy(alpha = 0.3f))
-                                        )
-                                        Box(
-                                            modifier = Modifier.size(18.dp)
-                                                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                                                .padding(3.dp)
-                                                .background(MaterialTheme.colorScheme.primary, CircleShape)
-                                                .onGloballyPositioned {
-                                                    nodePositions[currentIndex] = it.positionInParent().y
-                                                })
-                                        Box(
-                                            modifier = Modifier.width(4.dp).weight(wPast)
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
-                                        )
-                                        Box(
-                                            modifier = Modifier.size(8.dp).background(
-                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                                CircleShape
-                                            ).onGloballyPositioned {
-                                                nodePositions[currentIndex - 1] = it.positionInParent().y
-                                            })
+                                        val wNext2 by animateFloatAsState(targetValue = ((allWaypoints.getOrNull(currentIndex + 1)?.distanceToNext ?: 100f) / 50f).coerceIn(0.5f, 5f), animationSpec = tween(450))
+                                        val wNext1 by animateFloatAsState(targetValue = ((allWaypoints.getOrNull(currentIndex)?.distanceToNext ?: 100f) / 50f).coerceIn(0.5f, 5f), animationSpec = tween(450))
+                                        val wPast  by animateFloatAsState(targetValue = ((allWaypoints.getOrNull(currentIndex - 1)?.distanceToNext ?: 50f) / 50f).coerceIn(0.5f, 2f), animationSpec = tween(450))
+                                        Box(modifier = Modifier.size(8.dp).border(1.dp, Color.Gray.copy(alpha = 0.5f), CircleShape).onGloballyPositioned { nodePositions[currentIndex + 2] = it.positionInParent().y })
+                                        Box(modifier = Modifier.width(3.dp).weight(wNext2).background(Color.Gray.copy(alpha = 0.3f)))
+                                        Box(modifier = Modifier.size(10.dp).border(1.dp, Color.Gray, CircleShape).background(MaterialTheme.colorScheme.surface, CircleShape).onGloballyPositioned { nodePositions[currentIndex + 1] = it.positionInParent().y })
+                                        Box(modifier = Modifier.width(3.dp).weight(wNext1).background(Color.Gray.copy(alpha = 0.3f)))
+                                        Box(modifier = Modifier.size(18.dp).border(2.dp, MaterialTheme.colorScheme.primary, CircleShape).padding(3.dp).background(MaterialTheme.colorScheme.primary, CircleShape).onGloballyPositioned { nodePositions[currentIndex] = it.positionInParent().y })
+                                        Box(modifier = Modifier.width(4.dp).weight(wPast).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)))
+                                        Box(modifier = Modifier.size(8.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape).onGloballyPositioned { nodePositions[currentIndex - 1] = it.positionInParent().y })
                                     }
                                 }
                             }
                         }
                     }
 
-                    // 4. 最近动态 - 横向时间轴
                     item(span = { GridItemSpan(6) }) {
-                        Text(
-                            "最近动态",
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.padding(top = 12.dp, start = 4.dp, bottom = 4.dp)
-                        )
+                        Text("最近动态", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, start = 4.dp, bottom = 4.dp))
                     }
 
                     item(span = { GridItemSpan(6) }) {
-                        // --- 状态：追踪当前指向的活动 ---
                         val activeActivity by remember {
                             derivedStateOf {
                                 val layoutInfo = timelineState.layoutInfo
                                 val visibleItems = layoutInfo.visibleItemsInfo
                                 if (visibleItems.isEmpty()) return@derivedStateOf null
-
-                                // 1. 获取容器的总宽度
                                 val containerWidth = layoutInfo.viewportSize.width
-
-                                // 2. 计算判定点的位置：容器宽度 - 箭头距离右边的 padding (92dp) - 箭头自身宽度的一半 (12dp)
-                                // 这样判定点就正好落在箭头的尖端正下方
                                 val triggerPoint = containerWidth - with(density) { (92.dp - 12.dp).toPx() }
-
-                                // 3. 寻找中心点最接近该判定点的项
                                 visibleItems.minByOrNull { item ->
                                     val itemCenter = item.offset + (item.size / 2)
                                     kotlin.math.abs(itemCenter - triggerPoint)
@@ -1561,57 +1512,35 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                             }
                         }
                         LaunchedEffect(activeActivity) {
-                            if (activeActivity != null && isTimelineActive) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
+                            if (activeActivity != null && isTimelineActive) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         }
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        while (true) {
-                                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                                            val change = event.changes.first()
-
-                                            if (change.pressed) {
-                                                isTimelineActive = true
-                                            }
-
-                                        }
+                            modifier = Modifier.fillMaxWidth().pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        if (event.changes.first().pressed) isTimelineActive = true
                                     }
                                 }
+                            }
                         ) {
-                            // 时间轴容器
                             Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(cardGray.copy(alpha = 0.3f))
-                                    .padding(vertical = 12.dp)
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                                    .background(cardGray.copy(alpha = 0.3f)).padding(vertical = 12.dp)
                             ) {
-                                // --- 新增：向下指的箭头指示器 ---
                                 Icon(
                                     imageVector = Icons.Default.KeyboardArrowDown,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd) // 改为右上角对齐
-                                        .padding(end = 87.dp)    // 距离右边缘一段距离，对齐最后一个 Item 的大致位置
-                                        .size(24.dp)
-                                        .offset(y = (-19).dp)
+                                    modifier = Modifier.align(Alignment.TopEnd).padding(end = 87.dp).size(24.dp).offset(y = (-19).dp)
                                 )
-
                                 LazyRow(
                                     state = timelineState,
                                     flingBehavior = snapBehavior,
                                     modifier = Modifier.fillMaxWidth(),
-                                    contentPadding = PaddingValues(horizontal = 16.dp) // 增加内边距方便滑动
+                                    contentPadding = PaddingValues(horizontal = 16.dp)
                                 ) {
-                                    itemsIndexed(
-                                        items = activities,
-                                        key = { index, item -> item.timestamp }
-                                    ) { index, activity ->
+                                    itemsIndexed(items = activities, key = { _, item -> item.timestamp }) { index, activity ->
                                         TimelineItem(
                                             activity = activity,
                                             isFirst = index == 0,
@@ -1622,74 +1551,38 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                                     }
                                 }
                             }
-
                             Spacer(Modifier.height(8.dp))
                             androidx.compose.animation.AnimatedVisibility(
                                 visible = isTimelineActive,
                                 enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                                 exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
                             ) {
-                                // --- 新增：详情展示 Card ---
                                 AnimatedContent(
                                     targetState = activeActivity,
                                     transitionSpec = {
-                                        // 获取初始状态和目标状态在原列表中的索引
                                         val initialIndex = activities.indexOf(initialState)
                                         val targetIndex = activities.indexOf(targetState)
-
-                                        // 如果目标索引大于初始索引，说明时间轴在向左滚动（查看未来的项），新卡片应从右侧滑入
-                                        if (targetIndex > initialIndex) {
-                                            (slideInHorizontally { it } + fadeIn()).togetherWith(
-                                                slideOutHorizontally { -it } + fadeOut()
-                                            )
-                                        } else {
-                                            // 否则，新卡片从左侧滑入
-                                            (slideInHorizontally { -it } + fadeIn()).togetherWith(
-                                                slideOutHorizontally { it } + fadeOut()
-                                            )
-                                        }.using(
-                                            // 加上 SizeTransform(clip = false) 可以防止动画过程中阴影被裁剪
-                                            SizeTransform(clip = false)
-                                        )
+                                        if (targetIndex > initialIndex)
+                                            (slideInHorizontally { it } + fadeIn()).togetherWith(slideOutHorizontally { -it } + fadeOut())
+                                        else
+                                            (slideInHorizontally { -it } + fadeIn()).togetherWith(slideOutHorizontally { it } + fadeOut())
+                                                .using(SizeTransform(clip = false))
                                     },
                                     label = "ActivityDetail"
                                 ) { target ->
                                     Card(
                                         modifier = Modifier.fillMaxWidth().aspectRatio(3f),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = Color(0xFFE8E8E8)
-                                        ),
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFFE8E8E8)),
                                         shape = RoundedCornerShape(7.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(40.dp)
-                                                    .background(MaterialTheme.colorScheme.primary, CircleShape),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Info,
-                                                    null,
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
+                                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Box(modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary, CircleShape), contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Default.Info, null, tint = Color.White, modifier = Modifier.size(20.dp))
                                             }
                                             Spacer(Modifier.width(12.dp))
                                             Column {
-                                                Text(
-                                                    text = target?.title ?: "滑动查看动态",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                Text(
-                                                    text = if (target != null) "记录时间: ${target.timestamp.toFormattedTime()}" else "请左右滑动上方时间轴",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = Color.Gray
-                                                )
+                                                Text(text = target?.title ?: "滑动查看动态", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                                Text(text = if (target != null) "记录时间: ${target.timestamp.toFormattedTime()}" else "请左右滑动上方时间轴", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                             }
                                         }
                                     }
@@ -1698,14 +1591,123 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
                         }
                     }
 
-                    items(6, span = { GridItemSpan(3) }) { itemIndex ->
-                        Box(
-                            modifier = Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(cardGray),
-                            contentAlignment = Alignment.Center
+                    item(span = { GridItemSpan(6) }) {
+                        Text(
+                            "飞机详情",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(top = 12.dp, start = 4.dp, bottom = 4.dp)
+                        )
+                    }
+
+
+
+                    item(span = { GridItemSpan(6) }) {
+                        AircraftSearchAndToggle(
+                            query = aircraftSearchQuery,
+                            onQueryChange = { aircraftSearchQuery = it },
+                            columnCount = aircraftColumnCount,
+                            onColumnChange = {
+                                if (aircraftColumnCount != it) {
+                                    aircraftColumnCount = it
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                }
+                            }
+                        )
+                    }
+// --- 空状态提示 ---
+                    item(span = { GridItemSpan(6) }) {
+                        AnimatedVisibility(
+                            visible = filteredAircraft.isEmpty(),
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
                         ) {
-                            Text("Item ${itemIndex + 1}", color = Color.Gray)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(72.dp)
+                                    .clip(RoundedCornerShape(7.dp))
+                                    .background(cardGray),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "未找到匹配的飞机",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.Gray
+                                )
+                            }
                         }
                     }
+                    // ============================================================
+                    // 【核心修改：将列表区域作为整体进行淡入淡出左右滑动动画】
+                    // ============================================================
+                    item(span = { GridItemSpan(6) }) {
+                        AnimatedContent(
+                            targetState = aircraftColumnCount,
+                            transitionSpec = {
+                                // 根据列数增加或减少决定滑动方向
+                                if (targetState > initialState) {
+                                    // 1列 -> 2列：新页面从右边滑入，旧页面向左边滑出
+                                    (slideInHorizontally { it / 2 } + fadeIn(tween(300)))
+                                        .togetherWith(slideOutHorizontally { -it / 2 } + fadeOut(tween(300)))
+                                } else {
+                                    // 2列 -> 1列：新页面从左边滑入，旧页面向右边滑出
+                                    (slideInHorizontally { -it / 2 } + fadeIn(tween(300)))
+                                        .togetherWith(slideOutHorizontally { it / 2 } + fadeOut(tween(300)))
+                                }.using(SizeTransform(clip = false))
+                            },
+                            label = "AircraftListSwitch"
+                        ) { currentCols ->
+                            // 根据当前选中的列数，渲染完全不同的布局页面
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (currentCols == 1) {
+                                    // --- 单列页面布局 ---
+                                    filteredAircraft.forEach { aircraft ->
+                                        AircraftDetailCard(
+                                            aircraft = aircraft,
+                                            isCompact = false
+                                        )
+                                    }
+                                } else {
+                                    // --- 双列页面布局 ---
+                                    val rows = filteredAircraft.chunked(2)
+                                    rows.forEach { rowItems ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            rowItems.forEach { aircraft ->
+                                                Box(modifier = Modifier.weight(1f)) {
+                                                    AircraftDetailCard(
+                                                        aircraft = aircraft,
+                                                        isCompact = true
+                                                    )
+                                                }
+                                            }
+                                            // 如果最后一行只有一个，补齐空间
+                                            if (rowItems.size < 2) {
+                                                Spacer(modifier = Modifier.weight(1f))
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (filteredAircraft.isEmpty()) {
+                                    Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                                        Text("未找到匹配结果", color = Color.Gray)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 底部留白
+                    item(span = { GridItemSpan(6) }) {
+                        Spacer(Modifier.height(36.dp))
+                    }
+
                 } else {
                     items(48, span = { GridItemSpan(3) }) { itemIndex ->
                         Box(
@@ -1721,6 +1723,678 @@ fun ContentAreaMobile(modifier: Modifier = Modifier, pageIndex: Int) {
     }
 }
 
+@Composable
+fun AnimatedAircraftItem(
+    aircraft: AircraftInfo,
+    isCompact: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier) {
+        AnimatedContent(
+            targetState = isCompact,
+            transitionSpec = {
+
+                // ✅ 1列 -> 2列：向左滑入
+                if (targetState) {
+                    (slideInHorizontally { width -> width / 3 } + fadeIn())
+                        .togetherWith(
+                            slideOutHorizontally { width -> -width / 3 } + fadeOut()
+                        )
+                }
+                // ✅ 2列 -> 1列：向右滑入
+                else {
+                    (slideInHorizontally { width -> -width / 3 } + fadeIn())
+                        .togetherWith(
+                            slideOutHorizontally { width -> width / 3 } + fadeOut()
+                        )
+                }.using(
+                    SizeTransform(clip = false)
+                )
+            },
+            label = "AircraftLayoutSwitch_${aircraft.id}"
+        ) { compact ->
+
+            AircraftDetailCard(
+                aircraft = aircraft,
+                isCompact = compact
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalAnimationApi::class)
+@Composable
+fun AircraftDetailCard(
+    aircraft: AircraftInfo,
+    isCompact: Boolean,
+) {
+    val cardGray = Color(0xFFE8E8E8)
+    val fuelColor = when {
+        aircraft.fuel > 0.5f  -> Color(0xFF4CAF50)
+        aircraft.fuel > 0.25f -> Color(0xFFFF9800)
+        else                  -> Color(0xFFF44336)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(7.dp))
+            .background(cardGray)
+    ) {
+
+        if (isCompact) {
+            // --- 2 列紧凑布局 ---
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                // 型号 + 状态
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = aircraft.model,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(aircraft.status.statusColor.copy(alpha = 0.13f))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = aircraft.status.label,
+                            fontSize = 9.sp,
+                            color = aircraft.status.statusColor,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                // 编号 + 任务
+                Text(
+                    text = "${aircraft.id} · ${aircraft.mission}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 10.sp
+                )
+                // 坐标
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Place, null, tint = Color.Gray, modifier = Modifier.size(10.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text(
+                        text = "${aircraft.lat}°N  ${aircraft.lon}°E",
+                        fontSize = 9.sp,
+                        color = Color.Gray
+                    )
+                }
+                // 高度 + 速度
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFFE8F5E9))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text("↑${aircraft.altitude}m", fontSize = 9.sp, color = Color(0xFF388E3C))
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFFFFF3E0))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text("${aircraft.speed}km/h", fontSize = 9.sp, color = Color(0xFFE65100))
+                    }
+                }
+                // 分隔线
+                Box(Modifier.fillMaxWidth().height(0.5.dp).background(Color.Gray.copy(alpha = 0.2f)))
+                // 燃油
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("燃油", fontSize = 9.sp, color = Color.Gray)
+                    Text(
+                        "${(aircraft.fuel * 100).toInt()}%",
+                        fontSize = 9.sp,
+                        color = fuelColor,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                LinearProgressIndicator(
+                    progress = { aircraft.fuel },
+                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape),
+                    color = fuelColor,
+                    trackColor = Color.Gray.copy(alpha = 0.15f)
+                )
+            }
+        } else {
+            // --- 1 列展开布局 ---
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // 头部：图标 + 型号/编号 + 状态
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // 状态指示块
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(aircraft.status.statusColor.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(10.dp)
+                                        .background(aircraft.status.statusColor, CircleShape)
+                                )
+                            }
+                        }
+                        Column {
+                            Text(
+                                text = aircraft.model,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = aircraft.id,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+                    // 状态 Chip
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(aircraft.status.statusColor.copy(alpha = 0.12f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(Modifier.size(6.dp).background(aircraft.status.statusColor, CircleShape))
+                            Text(
+                                text = aircraft.status.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = aircraft.status.statusColor
+                            )
+                        }
+                    }
+                }
+
+                // 任务/高度/速度 Tags
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        Modifier.clip(RoundedCornerShape(5.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            aircraft.mission,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Box(
+                        Modifier.clip(RoundedCornerShape(5.dp))
+                            .background(Color(0xFFE8F5E9))
+                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                    ) {
+                        Text("↑ ${aircraft.altitude}m", style = MaterialTheme.typography.labelSmall, color = Color(0xFF388E3C))
+                    }
+                    Box(
+                        Modifier.clip(RoundedCornerShape(5.dp))
+                            .background(Color(0xFFFFF3E0))
+                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                    ) {
+                        Text("${aircraft.speed}km/h", style = MaterialTheme.typography.labelSmall, color = Color(0xFFE65100))
+                    }
+                }
+
+                // 分隔线
+                Box(Modifier.fillMaxWidth().height(0.5.dp).background(Color.Gray.copy(alpha = 0.2f)))
+
+                // 坐标
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(Icons.Default.Place, null, tint = Color.Gray, modifier = Modifier.size(13.dp))
+                    Text(
+                        text = "${aircraft.lat}°N,  ${aircraft.lon}°E",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                }
+
+                // 燃油 + 信号双行数据
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // 燃油
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("燃油", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                            Text(
+                                "${(aircraft.fuel * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = fuelColor
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { aircraft.fuel },
+                            modifier = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape),
+                            color = fuelColor,
+                            trackColor = Color.Gray.copy(alpha = 0.15f)
+                        )
+                    }
+                    // 信号
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("信号", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                            Text(
+                                "${(aircraft.signalStrength * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { aircraft.signalStrength },
+                            modifier = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = Color.Gray.copy(alpha = 0.15f)
+                        )
+                    }
+                }
+            }
+        }
+
+    }
+}
+
+@Composable
+fun AircraftSearchAndToggle(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    columnCount: Int,
+    onColumnChange: (Int) -> Unit
+) {
+    val cardGray = Color(0xFFE8E8E8)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+
+        // ✅ 搜索框
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(7.dp))
+                .background(cardGray)
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+
+                Icon(
+                    Icons.Default.Search,
+                    null,
+                    tint = Color.Gray,
+                    modifier = Modifier.size(18.dp)
+                )
+
+                Spacer(Modifier.width(8.dp))
+
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    decorationBox = { innerTextField ->
+                        Box {
+                            if (query.isEmpty()) {
+                                Text(
+                                    "搜索型号、编号、任务...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.Gray.copy(alpha = 0.6f)
+                                )
+                            }
+                            innerTextField()
+                        }
+                    }
+                )
+
+                AnimatedVisibility(
+                    visible = query.isNotEmpty(),
+                    enter = scaleIn() + fadeIn(),
+                    exit = scaleOut() + fadeOut()
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        null,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clickable { onQueryChange("") }
+                    )
+                }
+            }
+        }
+
+        // ✅ 列切换
+        // ✅ 修改后的列切换：点击整个大区域即可切换
+        Box(
+            modifier = Modifier
+                .height(44.dp)
+                .width(88.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(cardGray)
+                .padding(4.dp)
+                // 【关键改动 1】：将点击事件移到这里，点击整个大框直接切换
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null // 移除默认涟漪，因为我们有自定义的滑块动画
+                ) {
+                    // 如果是 1 就切到 2，如果是 2 就切到 1
+                    onColumnChange(if (columnCount == 1) 2 else 1)
+                }
+        ) {
+            // 【关键改动 2】：添加一个带动画的背景滑块
+            // 计算滑块的偏移量：如果是 1 则在左边(0dp)，如果是 2 则在右边(40dp)
+            val indicatorOffset by animateDpAsState(
+                targetValue = if (columnCount == 1) 0.dp else 40.dp,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+            )
+
+            // 动画滑块主体
+            Box(
+                modifier = Modifier
+                    .offset(x = indicatorOffset)
+                    .fillMaxHeight()
+                    .width(40.dp) // 宽度约为总宽的一半减去 padding
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+            )
+
+            // 上层的文字显示
+            Row(Modifier.fillMaxSize()) {
+                listOf(1, 2).forEach { count ->
+                    val selected = columnCount == count
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = count.toString(),
+                            // 文字颜色也做个简单的动画过渡
+                            color = animateColorAsState(
+                                if (selected) MaterialTheme.colorScheme.primary
+                                else Color.Gray
+                            ).value,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
+            }
+        }
+
+    }
+}
+data class AircraftEndurance(
+    val id: String,
+    val enduranceMinutes: Int
+)
+fun Int.toHourMinute(): String {
+    val h = this / 60
+    val m = this % 60
+    return "${h}h ${m}m"
+}
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun AircraftEnduranceSection(
+    data: List<AircraftEndurance>,
+    modifier: Modifier = Modifier
+) {
+    var ascending by remember { mutableStateOf(true) }
+
+    val sortedData = remember(data, ascending) {
+        if (ascending)
+            data.sortedBy { it.enduranceMinutes }
+        else
+            data.sortedByDescending { it.enduranceMinutes }
+    }
+
+    val maxValue = sortedData.maxOfOrNull { it.enduranceMinutes } ?: 1
+    val minValue = sortedData.minOfOrNull { it.enduranceMinutes } ?: 0
+
+    Column(modifier = modifier) {
+
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),   // ✅ 两列
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items(sortedData.size) { index ->
+                val aircraft = sortedData[index]
+
+                val ratio = aircraft.enduranceMinutes / maxValue.toFloat()
+                val isLowest = aircraft.enduranceMinutes == minValue
+                val isCritical = aircraft.enduranceMinutes < 300
+
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+
+                        Text(
+                            text = aircraft.id,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        Text(
+                            text = aircraft.enduranceMinutes.toHourMinute(),
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.End,
+                            fontWeight = if (isLowest) FontWeight.Bold else FontWeight.Normal,
+                            color = Color.Unspecified
+                        )
+                    }
+                    Spacer(Modifier.height(3.dp))
+
+                    SegmentedEnergyBar(
+                        ratio = ratio,
+                        segments = 5,
+                        isCritical = isCritical,
+                        isLowest = isLowest
+                    )
+                }
+            }
+        }
+    }
+}
+@Composable
+fun SegmentedEnergyBar(
+    ratio: Float,
+    segments: Int = 5,
+    isCritical: Boolean,
+    isLowest: Boolean
+) {
+    val animatedRatio by animateFloatAsState(
+        targetValue = ratio,
+        animationSpec = tween(600),
+        label = "energyAnim"
+    )
+
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        repeat(segments) { index ->
+
+            val filled = index < (animatedRatio * segments)
+
+            val baseColor = when {
+                isCritical -> Color(0xFFDE9B99)
+                ratio < 0.5f -> Color(0xFFFFD6A0)
+                else -> Color(0xFFA1ECA4)
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(if (filled) baseColor else Color.LightGray.copy(alpha = 0.15f))
+            )
+        }
+    }
+}
+enum class FlightStatus {
+    GROUND,       // 地勤
+    STANDBY,      // 待机
+    CRUISE        // 巡航
+}
+val StatusColorMap = mapOf(
+    FlightStatus.GROUND to Color(0xFFFAABAA),
+    FlightStatus.STANDBY to Color(0xFFCECECE),
+    FlightStatus.CRUISE to Color(0xFFB0E3B5)
+)
+@Composable
+fun StatusMatrix(
+    modifier: Modifier = Modifier,
+    data: List<FlightStatus>,
+    cellSize: Dp = 19.dp,
+    spacing: Dp = 4.dp
+) {
+    BoxWithConstraints(modifier = modifier) {
+
+        val maxWidthPx = constraints.maxWidth.toFloat()
+        val cellPx = with(LocalDensity.current) { cellSize.toPx() }
+        val spacingPx = with(LocalDensity.current) { spacing.toPx() }
+
+        // ✅ 动态计算每行多少列
+        val columnCount = max(
+            1,
+            ((maxWidthPx + spacingPx) / (cellPx + spacingPx)).toInt()
+        )
+
+        val rows = data.chunked(columnCount)
+
+        Column(verticalArrangement = Arrangement.spacedBy(spacing)) {
+            rows.forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                    row.forEach { status ->
+                        Box(
+                            modifier = Modifier
+                                .size(cellSize)
+                                .background(
+                                    color = StatusColorMap[status] ?: Color.Gray,
+                                    shape = RoundedCornerShape(2.dp)
+                                )
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+@Composable
+fun StatusLegend() {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        StatusColorMap.forEach { (status, color) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(19.dp)
+                        .background(color, RoundedCornerShape(3.dp))
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = when (status) {
+                        FlightStatus.GROUND -> "地勤"
+                        FlightStatus.STANDBY -> "待机"
+                        FlightStatus.CRUISE -> "巡航"
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+@Composable
+fun FlightStatusSection(
+    data: List<FlightStatus>,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxSize(),
+        horizontalArrangement = Arrangement.spacedBy(22.dp)
+    ) {
+
+        // ✅ 左侧：自适应矩阵
+        StatusMatrix(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            data = data
+        )
+
+        // ✅ 右侧：图例
+        StatusLegend()
+    }
+}
 enum class ActivityType {
     TASK_COMPLETED,
     WAYPOINT_REACHED,
@@ -1878,31 +2552,115 @@ fun TimelineItem(
 
 
 @Composable
-fun StatCard(label: String, value: String, icon: ImageVector, tint: Color, onClick: (() -> Unit)? = null) {
-    Box(
-        modifier = Modifier
-            .aspectRatio(1.5f)
-            .clip(RoundedCornerShape(7.dp))
-            .background(Color(0xFFE8E8E8))
+fun StatCard(
+    label: String,
+    value: String,
+    icon: ImageVector,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(7.dp),
+    containerColor: Color = Color(0xFFE8E8E8),
+    elevation: Dp = 0.dp,
+    onClick: (() -> Unit)? = null,
+    bottomPadding: Dp = 7.dp,
+    startPadding: Dp = 8.dp,
+    ratio: Float
+) {
+    Surface(
+        modifier = modifier
+            .aspectRatio(ratio)
+            .animateContentSize()
             .then(
-                if (onClick != null)
-                    Modifier.clickable { onClick() }
-                else Modifier
-            )
-            .padding(12.dp)
+                if (onClick != null) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = LocalIndication.current
+                    ) { onClick() }
+                } else Modifier
+            ),
+        shape = shape,
+        color = containerColor,
+        tonalElevation = elevation,
+        shadowElevation = elevation
     ) {
-        Icon(
-            icon, null,
-            modifier = Modifier.align(Alignment.TopEnd).size(30.dp),
-            tint = Color.Gray.copy(alpha = 0.5f)
-        )
-        Column(modifier = Modifier.align(Alignment.BottomStart)) {
-            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
-            Text(label, style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(startPadding, end = 12.dp, top = 7.dp, bottom = bottomPadding)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(30.dp),
+                tint = tint.copy(alpha = 0.5f)
+            )
+
+            Column(
+                modifier = Modifier.align(Alignment.BottomStart)
+            ) {
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Color.Gray
+                )
+            }
         }
     }
 }
+@Composable
+fun DetailCard(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(
+        bottomStart = 7.dp,
+        bottomEnd = 7.dp
+    ),
+    containerColor: Color = Color(0xFFE8E8E8),
+    elevation: Dp = 0.dp,
+    content: @Composable ColumnScope.() -> Unit = {
+        Text(
+            text = "详细信息",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(8.dp))
+        val mockData = remember {
+            List(120) {
+                FlightStatus.entries.toTypedArray().random()
+            }
+        }
 
+        FlightStatusSection(
+            data = mockData,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        )
+    }
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize(),
+        shape = shape,
+        color = containerColor,
+        tonalElevation = elevation,
+        shadowElevation = elevation
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp),
+            content = content
+        )
+    }
+}
 @Composable
 fun CircularQuickActions(
     modifier: Modifier = Modifier,
