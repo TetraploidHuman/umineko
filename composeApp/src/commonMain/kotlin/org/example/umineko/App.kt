@@ -8,7 +8,9 @@ import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -88,7 +90,9 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorFilter.Companion.tint
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
@@ -100,6 +104,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInParent
@@ -127,6 +133,7 @@ import kotlin.math.sin
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.max
+import kotlin.math.sqrt
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.time.TimeSource
@@ -1703,88 +1710,266 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                             style = MaterialTheme.typography.titleSmall,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        var mousePosition by remember { mutableStateOf<Offset?>(null) }
 
                         val squareSize = 30f // 中心小正方形的边长
                         val lineColor = Color.White // 白色在地图上通常更清晰
                         val lineWidth = 1.dp
 
+                        var mousePosition by remember { mutableStateOf<Offset?>(null) }
+                        var lockedTarget by remember { mutableStateOf<TrackingTarget?>(null) }
+
+                        val trackingTargets = remember { mutableStateListOf<TrackingTarget>() }
+                        var targetCounter by remember { mutableStateOf(1) }
+
+                        var scale by remember { mutableStateOf(1f) } // 缩放比例
+
+                        val snapRadius = 25f
+
+                        fun findNearbyTarget(position: Offset): TrackingTarget? {
+                            return trackingTargets.minByOrNull { target ->
+                                val dx = target.position.x - position.x
+                                val dy = target.position.y - position.y
+                                sqrt(dx * dx + dy * dy)
+                            }?.takeIf { target ->
+                                val dx = target.position.x - position.x
+                                val dy = target.position.y - position.y
+                                sqrt(dx * dx + dy * dy) < snapRadius
+                            }
+                        }
+
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clip(RoundedCornerShape(7.dp))
-                                .background(Color.LightGray)
-                                // 使用 pointerInput 替代直接的 onPointerEvent
+                                .background(Color.Black)
                                 .pointerInput(Unit) {
                                     awaitPointerEventScope {
                                         while (true) {
                                             val event = awaitPointerEvent()
-                                            // 检查事件类型
+                                            val change = event.changes.first()
+
                                             when (event.type) {
-                                                PointerEventType.Move, PointerEventType.Enter -> {
-                                                    // 获取第一个手指或鼠标的位置
-                                                    mousePosition = event.changes.first().position
+                                                // 鼠标滚轮缩放地图
+                                                PointerEventType.Scroll -> {
+                                                    val scrollDelta = change.scrollDelta
+                                                    scale *= 1f + scrollDelta.y / 1000f // 根据滚轮滑动调整缩放比例
+                                                    scale = scale.coerceIn(0.5f, 3f) // 限制缩放范围
                                                 }
+
+                                                // 鼠标移动
+                                                PointerEventType.Move -> {
+                                                    val currentPos = change.position
+                                                    mousePosition = currentPos
+
+                                                    // 重新计算锁定目标
+                                                    lockedTarget = findNearbyTarget(currentPos)
+                                                }
+
+                                                // 鼠标离开区域
                                                 PointerEventType.Exit -> {
                                                     mousePosition = null
+                                                    lockedTarget = null
+                                                }
+
+                                                // 鼠标点击
+                                                PointerEventType.Press -> {
+                                                    val clickPos = change.position
+                                                    val nearby = findNearbyTarget(clickPos)
+
+                                                    // 右键删除
+                                                    if (event.buttons.isSecondaryPressed && nearby != null) {
+                                                        trackingTargets.remove(nearby)
+
+                                                        if (lockedTarget == nearby) {
+                                                            lockedTarget = null
+                                                        }
+                                                        continue
+                                                    }
+
+                                                    // 左键新增
+                                                    if (event.buttons.isPrimaryPressed) {
+                                                        val newId =
+                                                            "TGT-${targetCounter.toString().padStart(2, '0')}"
+
+                                                        trackingTargets.add(
+                                                            TrackingTarget(
+                                                                id = newId,
+                                                                position = clickPos
+                                                            )
+                                                        )
+                                                        targetCounter++
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                .drawWithContent {
-                                    drawContent() // 绘制底层图片
+                        ) {
+                            // 地图
+                            Image(
+                                painter = painterResource(Res.drawable.map), // 这里替换成你原来的 painterResource(Res.drawable.map)
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        scaleX = scale
+                                        scaleY = scale
+                                    },
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                colorFilter = ColorFilter.tint(
+                                    Color(0xFF1A2631),
+                                    BlendMode.Screen
+                                )
+                            )
 
-                                    mousePosition?.let { pos ->
-                                        val halfSize = squareSize / 2
-                                        val strokeWidth = lineWidth.toPx()
+                            val validLockedTarget = lockedTarget?.takeIf { trackingTargets.contains(it) }
+                            val crosshairPosition = validLockedTarget?.position ?: mousePosition
 
-                                        // 1. 绘制中心空心小正方形
-                                        drawRect(
-                                            color = lineColor,
-                                            topLeft = Offset(pos.x - halfSize, pos.y - halfSize),
-                                            size = Size(squareSize, squareSize),
-                                            style = Stroke(width = strokeWidth)
-                                        )
+                            // 十字线绘制位置
+                            crosshairPosition?.let { pos ->
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    val halfSize = squareSize / 2
+                                    val strokeWidth = lineWidth.toPx()
 
-                                        // 2. 绘制十字指示线 (跳过中间正方形区域)
-                                        // 垂直线 - 上段
-                                        drawLine(
-                                            color = lineColor,
-                                            start = Offset(pos.x, 0f),
-                                            end = Offset(pos.x, pos.y - halfSize),
-                                            strokeWidth = strokeWidth
-                                        )
-                                        // 垂直线 - 下段
-                                        drawLine(
-                                            color = lineColor,
-                                            start = Offset(pos.x, pos.y + halfSize),
-                                            end = Offset(pos.x, size.height),
-                                            strokeWidth = strokeWidth
-                                        )
-                                        // 水平线 - 左段
-                                        drawLine(
-                                            color = lineColor,
-                                            start = Offset(0f, pos.y),
-                                            end = Offset(pos.x - halfSize, pos.y),
-                                            strokeWidth = strokeWidth
-                                        )
-                                        // 水平线 - 右段
-                                        drawLine(
-                                            color = lineColor,
-                                            start = Offset(pos.x + halfSize, pos.y),
-                                            end = Offset(size.width, pos.y),
-                                            strokeWidth = strokeWidth
+                                    drawRect(
+                                        color = lineColor,
+                                        topLeft = Offset(pos.x - halfSize, pos.y - halfSize),
+                                        size = Size(squareSize, squareSize),
+                                        style = Stroke(width = strokeWidth)
+                                    )
+
+                                    drawLine(
+                                        lineColor,
+                                        Offset(pos.x, 0f),
+                                        Offset(pos.x, pos.y - halfSize),
+                                        strokeWidth
+                                    )
+                                    drawLine(
+                                        lineColor,
+                                        Offset(pos.x, pos.y + halfSize),
+                                        Offset(pos.x, size.height),
+                                        strokeWidth
+                                    )
+                                    drawLine(
+                                        lineColor,
+                                        Offset(0f, pos.y),
+                                        Offset(pos.x - halfSize, pos.y),
+                                        strokeWidth
+                                    )
+                                    drawLine(
+                                        lineColor,
+                                        Offset(pos.x + halfSize, pos.y),
+                                        Offset(size.width, pos.y),
+                                        strokeWidth
+                                    )
+                                }
+
+                                // 十字指示器右上角坐标标签（跟随鼠标；吸附后隐藏）
+                                if (validLockedTarget == null) {
+                                    Column(
+                                        modifier = Modifier
+                                            .offset { IntOffset((pos.x + 52f).toInt(), (pos.y - 34f).toInt()) }
+                                            .background(Color.White)
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            .animateContentSize(),
+                                    ) {
+                                        Text(
+                                            text = "X:${pos.x.toInt()} Y:${pos.y.toInt()}",
+                                            color = Color.Black,
+                                            fontSize = 10.sp,
+                                            lineHeight = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontFamily = FontFamily.Monospace
                                         )
                                     }
                                 }
-                        ) {
-                            Image(
-                                painter = painterResource(Res.drawable.map),
-                                contentDescription = "Aircraft Image",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
+                            }
+
+                            // 绘制所有目标
+                            trackingTargets.forEach { target ->
+                                val pos = target.position
+                                val currentAlpha = target.alpha.value
+                                val color = Color.White
+
+                                // 当前 target 是否为吸附目标（注意用 validLockedTarget 来避免被删后引用还在的问题）
+                                val isLocked = (validLockedTarget == target)
+
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    Canvas(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .graphicsLayer { alpha = currentAlpha }
+                                    ) {
+                                        val sWidth = 1.dp.toPx()
+                                        val boxSize = 30f
+                                        val corner = 10f
+
+                                        drawLine(
+                                            color,
+                                            Offset(pos.x - 8f, pos.y),
+                                            Offset(pos.x + 8f, pos.y),
+                                            sWidth
+                                        )
+                                        drawLine(
+                                            color,
+                                            Offset(pos.x, pos.y - 8f),
+                                            Offset(pos.x, pos.y + 8f),
+                                            sWidth
+                                        )
+
+                                        val l = pos.x - boxSize
+                                        val r = pos.x + boxSize
+                                        val t = pos.y - boxSize
+                                        val b = pos.y + boxSize
+
+                                        drawLine(color, Offset(l, t), Offset(l + corner, t), sWidth)
+                                        drawLine(color, Offset(l, t), Offset(l, t + corner), sWidth)
+                                        drawLine(color, Offset(r, t), Offset(r - corner, t), sWidth)
+                                        drawLine(color, Offset(r, t), Offset(r, t + corner), sWidth)
+                                        drawLine(color, Offset(l, b), Offset(l + corner, b), sWidth)
+                                        drawLine(color, Offset(l, b), Offset(l, b - corner), sWidth)
+                                        drawLine(color, Offset(r, b), Offset(r - corner, b), sWidth)
+                                        drawLine(color, Offset(r, b), Offset(r, b - corner), sWidth)
+                                    }
+
+                                    // 目标标签：吸附后向下展开一行显示坐标（带尺寸动画）
+                                    Column(
+                                        modifier = Modifier
+                                            .offset {
+                                                IntOffset(
+                                                    (pos.x + 52f).toInt(),
+                                                    (pos.y - 34f).toInt()
+                                                )
+                                            }
+                                            .graphicsLayer { alpha = currentAlpha }
+                                            .background(color)
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            .animateContentSize(),
+                                        horizontalAlignment = Alignment.Start
+                                    ) {
+                                        Text(
+                                            text = "${target.id} TRACKING.",
+                                            color = Color.Black,
+                                            fontSize = 10.sp,
+                                            lineHeight = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+
+                                        if (isLocked) {
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = "X:${pos.x.toInt()} Y:${pos.y.toInt()}",
+                                                color = Color.Black,
+                                                fontSize = 10.sp,
+                                                lineHeight = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1795,6 +1980,11 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
     }
 }
 
+class TrackingTarget(
+    val id: String,
+    val position: Offset,
+    val alpha: Animatable<Float, AnimationVector1D> = Animatable(1f) // 初始透明度
+)
 
 // DrawScope 的扩展：绘制十字线并在小方块区域留空，再绘制空心方块边框
 private fun DrawScope.drawCrossAndHollowSquare(
