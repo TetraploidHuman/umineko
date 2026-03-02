@@ -96,6 +96,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorFilter.Companion.tint
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -106,6 +107,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInParent
@@ -1699,182 +1701,195 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                         }
                     }
                     Spacer(modifier = Modifier.width(8.dp))
+                    /********************  直接替换你的 Column { … }  ********************/
                     Column(
                         modifier = Modifier
                             .weight(2f)
                             .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
                             .fillMaxSize()
                     ) {
-                        Text(
-                            "全局地图",
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("全局地图", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(8.dp))
 
-                        val squareSize = 30f // 中心小正方形的边长
-                        val lineColor = Color.White // 白色在地图上通常更清晰
-                        val lineWidth = 1.dp
+                        /* ----------  绘制用的一些常量  ---------- */
+                        val squareSize = 30f
+                        val lineColor  = Color.White
+                        val lineWidth  = 1.dp
+                        val snapRadius = 25f
 
+                        /* ----------  运行时状态  ---------- */
                         var mousePosition by remember { mutableStateOf<Offset?>(null) }
                         var lockedTarget by remember { mutableStateOf<TrackingTarget?>(null) }
 
                         val trackingTargets = remember { mutableStateListOf<TrackingTarget>() }
-                        var targetCounter by remember { mutableStateOf(1) }
+                        var targetCounter   by remember { mutableStateOf(1) }
 
-                        var scale by remember { mutableStateOf(1f) } // 缩放比例
+                        var scale  by remember { mutableStateOf(1f) }           // 缩放倍数
+                        var offset by remember { mutableStateOf(Offset.Zero) }  // 平移（用于“以光标为中心缩放”）
 
-                        val snapRadius = 25f
+                        /* ----------  逻辑 / 屏幕 坐标互转 ---------- */
+                        fun screen2Logic(pt: Offset): Offset = (pt - offset) / scale
+                        fun logic2Screen(pt: Offset): Offset = pt * scale + offset
 
-                        fun findNearbyTarget(position: Offset): TrackingTarget? {
-                            return trackingTargets.minByOrNull { target ->
-                                val dx = target.position.x - position.x
-                                val dy = target.position.y - position.y
-                                sqrt(dx * dx + dy * dy)
-                            }?.takeIf { target ->
-                                val dx = target.position.x - position.x
-                                val dy = target.position.y - position.y
-                                sqrt(dx * dx + dy * dy) < snapRadius
+                        /* ----------  寻找吸附目标 ---------- */
+                        fun findNearbyTarget(screenPos: Offset): TrackingTarget? {
+                            return trackingTargets.minByOrNull { tgt ->
+                                (logic2Screen(tgt.position) - screenPos).getDistance()
+                            }?.takeIf { tgt ->
+                                (logic2Screen(tgt.position) - screenPos).getDistance() < snapRadius
                             }
                         }
 
+                        /* ----------------  主体区域  ---------------- */
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clip(RoundedCornerShape(7.dp))
                                 .background(Color.Black)
                                 .pointerInput(Unit) {
+                                    // 拖动状态
+                                    var isPanning = false
+                                    var panStart  = Offset.Zero
+                                    var startOff  = Offset.Zero
+
                                     awaitPointerEventScope {
                                         while (true) {
-                                            val event = awaitPointerEvent()
+                                            val event  = awaitPointerEvent()
                                             val change = event.changes.first()
 
                                             when (event.type) {
-                                                // 鼠标滚轮缩放地图
+
+                                                /* --- 鼠标滚轮缩放 --- */
                                                 PointerEventType.Scroll -> {
-                                                    val scrollDelta = change.scrollDelta
-                                                    scale *= 1f + scrollDelta.y / 1000f // 根据滚轮滑动调整缩放比例
-                                                    scale = scale.coerceIn(0.5f, 3f) // 限制缩放范围
+                                                    val dy = change.scrollDelta.y
+                                                    if (dy != 0f) {
+                                                        val factor   = 1f - dy * 0.05f
+                                                        val newScale = (scale * factor).coerceIn(0.5f, 3f)
+
+                                                        val p = change.position
+                                                        val applied = newScale / scale
+                                                        offset = (offset - p) * applied + p
+                                                        scale  = newScale
+                                                    }
                                                 }
 
-                                                // 鼠标移动
-                                                PointerEventType.Move -> {
-                                                    val currentPos = change.position
-                                                    mousePosition = currentPos
-
-                                                    // 重新计算锁定目标
-                                                    lockedTarget = findNearbyTarget(currentPos)
-                                                }
-
-                                                // 鼠标离开区域
-                                                PointerEventType.Exit -> {
-                                                    mousePosition = null
-                                                    lockedTarget = null
-                                                }
-
-                                                // 鼠标点击
+                                                /* --- 按下 --- */
                                                 PointerEventType.Press -> {
-                                                    val clickPos = change.position
-                                                    val nearby = findNearbyTarget(clickPos)
+                                                    val clickScreen = change.position
+                                                    val nearby      = findNearbyTarget(clickScreen)
 
                                                     // 右键删除
                                                     if (event.buttons.isSecondaryPressed && nearby != null) {
                                                         trackingTargets.remove(nearby)
-
-                                                        if (lockedTarget == nearby) {
-                                                            lockedTarget = null
-                                                        }
+                                                        if (lockedTarget == nearby) lockedTarget = null
                                                         continue
                                                     }
 
-                                                    // 左键新增
-                                                    if (event.buttons.isPrimaryPressed) {
-                                                        val newId =
-                                                            "TGT-${targetCounter.toString().padStart(2, '0')}"
-
+                                                    // 左键新增（不在吸附范围内才创建）
+                                                    if (event.buttons.isPrimaryPressed && nearby == null) {
+                                                        val newId = "TGT-${targetCounter.toString().padStart(2, '0')}"
+                                                        val logicPos = screen2Logic(clickScreen)
                                                         trackingTargets.add(
-                                                            TrackingTarget(
-                                                                id = newId,
-                                                                position = clickPos
-                                                            )
+                                                            TrackingTarget(id = newId, position = logicPos)
                                                         )
                                                         targetCounter++
                                                     }
+
+                                                    if (event.buttons.isTertiaryPressed) {   // 中键
+                                                        isPanning = true
+                                                        panStart  = change.position
+                                                        startOff  = offset
+                                                    }
+                                                }
+
+                                                /* --- 移动 --- */
+                                                PointerEventType.Move -> {
+                                                    val curPos = change.position
+                                                    mousePosition = curPos
+
+                                                    if (isPanning && event.buttons.isTertiaryPressed) {
+                                                        offset = startOff + (curPos - panStart)   // 平移
+                                                    } else {
+                                                        // 非拖动时做原来的吸附判断
+                                                        lockedTarget = findNearbyTarget(curPos)
+                                                    }
+
+                                                    // 若中键已抬起，则结束拖动
+                                                    if (!event.buttons.isTertiaryPressed) {
+                                                        isPanning = false
+                                                    }
+                                                }
+
+                                                /* --- 松开 --- */
+                                                PointerEventType.Release,
+                                                PointerEventType.Exit -> {
+                                                    isPanning     = false
+                                                    mousePosition = null
+                                                    lockedTarget  = null
                                                 }
                                             }
                                         }
                                     }
                                 }
                         ) {
-                            // 地图
+                            /* --------------------  地图底图  -------------------- */
+                            /* ---------- 在绘制底图的 Image 处 ---------- */
                             Image(
-                                painter = painterResource(Res.drawable.map), // 这里替换成你原来的 painterResource(Res.drawable.map)
+                                painter = painterResource(Res.drawable.map),
                                 contentDescription = null,
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        scaleX = scale
-                                        scaleY = scale
+                                        // 关键：一定要把 pivot 设为左上角！
+                                        transformOrigin = TransformOrigin(0f, 0f)
+
+                                        // 同一套 scale / offset
+                                        scaleX        = scale
+                                        scaleY        = scale
+                                        translationX  = offset.x
+                                        translationY  = offset.y
                                     },
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                colorFilter = ColorFilter.tint(
-                                    Color(0xFF1A2631),
-                                    BlendMode.Screen
-                                )
+                                contentScale = ContentScale.Crop,
+                                colorFilter  = tint(Color(0xFF1A2631), BlendMode.Screen)
                             )
 
+                            /* --------------------  十字线 / 鼠标指示  -------------------- */
                             val validLockedTarget = lockedTarget?.takeIf { trackingTargets.contains(it) }
-                            val crosshairPosition = validLockedTarget?.position ?: mousePosition
+                            val crosshairPos: Offset? = when {
+                                validLockedTarget != null -> logic2Screen(validLockedTarget.position)
+                                else                      -> mousePosition
+                            }
 
-                            // 十字线绘制位置
-                            crosshairPosition?.let { pos ->
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val halfSize = squareSize / 2
+                            crosshairPos?.let { pos ->
+                                Canvas(Modifier.fillMaxSize()) {
+                                    val halfSize    = squareSize / 2
                                     val strokeWidth = lineWidth.toPx()
 
                                     drawRect(
-                                        color = lineColor,
+                                        lineColor,
                                         topLeft = Offset(pos.x - halfSize, pos.y - halfSize),
                                         size = Size(squareSize, squareSize),
                                         style = Stroke(width = strokeWidth)
                                     )
 
-                                    drawLine(
-                                        lineColor,
-                                        Offset(pos.x, 0f),
-                                        Offset(pos.x, pos.y - halfSize),
-                                        strokeWidth
-                                    )
-                                    drawLine(
-                                        lineColor,
-                                        Offset(pos.x, pos.y + halfSize),
-                                        Offset(pos.x, size.height),
-                                        strokeWidth
-                                    )
-                                    drawLine(
-                                        lineColor,
-                                        Offset(0f, pos.y),
-                                        Offset(pos.x - halfSize, pos.y),
-                                        strokeWidth
-                                    )
-                                    drawLine(
-                                        lineColor,
-                                        Offset(pos.x + halfSize, pos.y),
-                                        Offset(size.width, pos.y),
-                                        strokeWidth
-                                    )
+                                    // 上下左右线
+                                    drawLine(lineColor, Offset(pos.x, 0f),   Offset(pos.x, pos.y - halfSize), strokeWidth)
+                                    drawLine(lineColor, Offset(pos.x, pos.y + halfSize), Offset(pos.x, size.height), strokeWidth)
+                                    drawLine(lineColor, Offset(0f, pos.y),   Offset(pos.x - halfSize, pos.y), strokeWidth)
+                                    drawLine(lineColor, Offset(pos.x + halfSize, pos.y), Offset(size.width, pos.y), strokeWidth)
                                 }
 
-                                // 十字指示器右上角坐标标签（跟随鼠标；吸附后隐藏）
+                                /* ----- 十字线坐标标签（吸附时隐藏） ----- */
                                 if (validLockedTarget == null) {
                                     Column(
                                         modifier = Modifier
                                             .offset { IntOffset((pos.x + 52f).toInt(), (pos.y - 34f).toInt()) }
                                             .background(Color.White)
                                             .padding(horizontal = 4.dp, vertical = 2.dp)
-                                            .animateContentSize(),
+                                            .animateContentSize()
                                     ) {
                                         Text(
-                                            text = "X:${pos.x.toInt()} Y:${pos.y.toInt()}",
+                                            "X:${pos.x.toInt()} Y:${pos.y.toInt()}",
                                             color = Color.Black,
                                             fontSize = 10.sp,
                                             lineHeight = 10.sp,
@@ -1885,42 +1900,34 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                                 }
                             }
 
-                            // 绘制所有目标
+                            /* --------------------  绘制所有目标 -------------------- */
                             trackingTargets.forEach { target ->
-                                val pos = target.position
-                                val currentAlpha = target.alpha.value
-                                val color = Color.White
+                                val posScreen      = logic2Screen(target.position)          // 先转成屏幕坐标
+                                val currentAlpha   = target.alpha.value
+                                val isLocked       = (validLockedTarget == target)
+                                val color          = Color.White
+                                val sWidth = with(LocalDensity.current) { 1.dp.toPx() }
+                                val boxSize        = 30f
+                                val corner         = 10f
 
-                                // 当前 target 是否为吸附目标（注意用 validLockedTarget 来避免被删后引用还在的问题）
-                                val isLocked = (validLockedTarget == target)
-
-                                Box(modifier = Modifier.fillMaxSize()) {
+                                Box(Modifier.fillMaxSize()) {
+                                    /* --- 十字小标识与拐角框 --- */
                                     Canvas(
                                         modifier = Modifier
                                             .fillMaxSize()
                                             .graphicsLayer { alpha = currentAlpha }
                                     ) {
-                                        val sWidth = 1.dp.toPx()
-                                        val boxSize = 30f
-                                        val corner = 10f
+                                        // 中心十字
+                                        drawLine(color, Offset(posScreen.x - 8f, posScreen.y),
+                                            Offset(posScreen.x + 8f, posScreen.y), sWidth)
+                                        drawLine(color, Offset(posScreen.x, posScreen.y - 8f),
+                                            Offset(posScreen.x, posScreen.y + 8f), sWidth)
 
-                                        drawLine(
-                                            color,
-                                            Offset(pos.x - 8f, pos.y),
-                                            Offset(pos.x + 8f, pos.y),
-                                            sWidth
-                                        )
-                                        drawLine(
-                                            color,
-                                            Offset(pos.x, pos.y - 8f),
-                                            Offset(pos.x, pos.y + 8f),
-                                            sWidth
-                                        )
-
-                                        val l = pos.x - boxSize
-                                        val r = pos.x + boxSize
-                                        val t = pos.y - boxSize
-                                        val b = pos.y + boxSize
+                                        // 四个角框
+                                        val l = posScreen.x - boxSize
+                                        val r = posScreen.x + boxSize
+                                        val t = posScreen.y - boxSize
+                                        val b = posScreen.y + boxSize
 
                                         drawLine(color, Offset(l, t), Offset(l + corner, t), sWidth)
                                         drawLine(color, Offset(l, t), Offset(l, t + corner), sWidth)
@@ -1932,13 +1939,13 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                                         drawLine(color, Offset(r, b), Offset(r, b - corner), sWidth)
                                     }
 
-                                    // 目标标签：吸附后向下展开一行显示坐标（带尺寸动画）
+                                    /* --- 目标标签 --- */
                                     Column(
                                         modifier = Modifier
                                             .offset {
                                                 IntOffset(
-                                                    (pos.x + 52f).toInt(),
-                                                    (pos.y - 34f).toInt()
+                                                    (posScreen.x + 52f).toInt(),
+                                                    (posScreen.y - 34f).toInt()
                                                 )
                                             }
                                             .graphicsLayer { alpha = currentAlpha }
@@ -1948,7 +1955,7 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                                         horizontalAlignment = Alignment.Start
                                     ) {
                                         Text(
-                                            text = "${target.id} TRACKING.",
+                                            "${target.id} TRACKING.",
                                             color = Color.Black,
                                             fontSize = 10.sp,
                                             lineHeight = 10.sp,
@@ -1957,9 +1964,9 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                                         )
 
                                         if (isLocked) {
-                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Spacer(Modifier.height(2.dp))
                                             Text(
-                                                text = "X:${pos.x.toInt()} Y:${pos.y.toInt()}",
+                                                "X:${posScreen.x.toInt()} Y:${posScreen.y.toInt()}",
                                                 color = Color.Black,
                                                 fontSize = 10.sp,
                                                 lineHeight = 10.sp,
@@ -1972,6 +1979,7 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                             }
                         }
                     }
+                    /********************  结束  ********************/
                 }
             } else {
 
