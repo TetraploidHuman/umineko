@@ -10,19 +10,13 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDp
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -35,8 +29,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.with
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -45,24 +37,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
-import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -75,24 +57,18 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.*
-import androidx.compose.material3.FloatingActionButtonDefaults.elevation
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorFilter.Companion.tint
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
@@ -110,7 +86,6 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
@@ -121,24 +96,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
-import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.jetbrains.compose.resources.painterResource
 import umineko.composeapp.generated.resources.Res
 import umineko.composeapp.generated.resources.map
-import kotlin.math.roundToInt
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.PI
-import kotlin.math.atan2
 import kotlin.math.max
-import kotlin.math.sqrt
 import kotlin.time.Clock
 import kotlin.time.Instant
-import kotlin.time.TimeSource
 
 // --- 动画常量 ---
 private const val ANIMATION_DURATION_MS = 300
@@ -1713,8 +1682,8 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
 
                         /* ----------  绘制用的一些常量  ---------- */
                         val squareSize = 30f
-                        val lineColor  = Color.White
-                        val lineWidth  = 1.dp
+                        val lineColor = Color.White
+                        val lineWidth = 1.dp
                         val snapRadius = 25f
 
                         /* ----------  运行时状态  ---------- */
@@ -1722,9 +1691,9 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                         var lockedTarget by remember { mutableStateOf<TrackingTarget?>(null) }
 
                         val trackingTargets = remember { mutableStateListOf<TrackingTarget>() }
-                        var targetCounter   by remember { mutableStateOf(1) }
+                        var targetCounter by remember { mutableStateOf(1) }
 
-                        var scale  by remember { mutableStateOf(1f) }           // 缩放倍数
+                        var scale by remember { mutableStateOf(1f) }           // 缩放倍数
                         var offset by remember { mutableStateOf(Offset.Zero) }  // 平移（用于“以光标为中心缩放”）
 
                         /* ----------  逻辑 / 屏幕 坐标互转 ---------- */
@@ -1749,16 +1718,15 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                                 .pointerInput(Unit) {
                                     // 拖动状态
                                     var isPanning = false
-                                    var panStart  = Offset.Zero
-                                    var startOff  = Offset.Zero
+                                    var panStart = Offset.Zero
+                                    var startOff = Offset.Zero
 
                                     awaitPointerEventScope {
                                         while (true) {
-                                            val event  = awaitPointerEvent()
+                                            val event = awaitPointerEvent()
                                             val change = event.changes.first()
 
                                             when (event.type) {
-
                                                 /* --- 鼠标滚轮缩放 --- */
                                                 PointerEventType.Scroll -> {
                                                     val dy = change.scrollDelta.y
@@ -1832,154 +1800,52 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
                                     }
                                 }
                         ) {
-                            /* --------------------  地图底图  -------------------- */
-                            /* ---------- 在绘制底图的 Image 处 ---------- */
                             Image(
                                 painter = painterResource(Res.drawable.map),
                                 contentDescription = null,
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        // 关键：一定要把 pivot 设为左上角！
+                                        //要把 pivot 设为左上角
                                         transformOrigin = TransformOrigin(0f, 0f)
 
-                                        // 同一套 scale / offset
-                                        scaleX        = scale
-                                        scaleY        = scale
-                                        translationX  = offset.x
-                                        translationY  = offset.y
+                                        scaleX = scale
+                                        scaleY = scale
+                                        translationX = offset.x
+                                        translationY = offset.y
                                     },
                                 contentScale = ContentScale.Crop,
-                                colorFilter  = tint(Color(0xFF1A2631), BlendMode.Screen)
+                                colorFilter = tint(Color(0xFF1A2631), BlendMode.Screen)
                             )
 
-                            /* --------------------  十字线 / 鼠标指示  -------------------- */
+                            /*   十字线 / 鼠标指示   */
                             val validLockedTarget = lockedTarget?.takeIf { trackingTargets.contains(it) }
                             val crosshairPos: Offset? = when {
                                 validLockedTarget != null -> logic2Screen(validLockedTarget.position)
-                                else                      -> mousePosition
+                                else -> mousePosition
                             }
 
-                            crosshairPos?.let { pos ->
-                                Canvas(Modifier.fillMaxSize()) {
-                                    val halfSize    = squareSize / 2
-                                    val strokeWidth = lineWidth.toPx()
+                            CrossHair(
+                                crosshairPos = crosshairPos,
+                                squareSize = squareSize,
+                                lineWidth = lineWidth,
+                                lineColor = lineColor,
+                                validLockedTarget = validLockedTarget
+                            )
 
-                                    drawRect(
-                                        lineColor,
-                                        topLeft = Offset(pos.x - halfSize, pos.y - halfSize),
-                                        size = Size(squareSize, squareSize),
-                                        style = Stroke(width = strokeWidth)
-                                    )
-
-                                    // 上下左右线
-                                    drawLine(lineColor, Offset(pos.x, 0f),   Offset(pos.x, pos.y - halfSize), strokeWidth)
-                                    drawLine(lineColor, Offset(pos.x, pos.y + halfSize), Offset(pos.x, size.height), strokeWidth)
-                                    drawLine(lineColor, Offset(0f, pos.y),   Offset(pos.x - halfSize, pos.y), strokeWidth)
-                                    drawLine(lineColor, Offset(pos.x + halfSize, pos.y), Offset(size.width, pos.y), strokeWidth)
-                                }
-
-                                /* ----- 十字线坐标标签（吸附时隐藏） ----- */
-                                if (validLockedTarget == null) {
-                                    Column(
-                                        modifier = Modifier
-                                            .offset { IntOffset((pos.x + 52f).toInt(), (pos.y - 34f).toInt()) }
-                                            .background(Color.White)
-                                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                                            .animateContentSize()
-                                    ) {
-                                        Text(
-                                            "X:${pos.x.toInt()} Y:${pos.y.toInt()}",
-                                            color = Color.Black,
-                                            fontSize = 10.sp,
-                                            lineHeight = 10.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                    }
-                                }
-                            }
-
-                            /* --------------------  绘制所有目标 -------------------- */
+                            /*   绘制所有目标  */
                             trackingTargets.forEach { target ->
-                                val posScreen      = logic2Screen(target.position)          // 先转成屏幕坐标
-                                val currentAlpha   = target.alpha.value
-                                val isLocked       = (validLockedTarget == target)
-                                val color          = Color.White
-                                val sWidth = with(LocalDensity.current) { 1.dp.toPx() }
-                                val boxSize        = 30f
-                                val corner         = 10f
-
-                                Box(Modifier.fillMaxSize()) {
-                                    /* --- 十字小标识与拐角框 --- */
-                                    Canvas(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .graphicsLayer { alpha = currentAlpha }
-                                    ) {
-                                        // 中心十字
-                                        drawLine(color, Offset(posScreen.x - 8f, posScreen.y),
-                                            Offset(posScreen.x + 8f, posScreen.y), sWidth)
-                                        drawLine(color, Offset(posScreen.x, posScreen.y - 8f),
-                                            Offset(posScreen.x, posScreen.y + 8f), sWidth)
-
-                                        // 四个角框
-                                        val l = posScreen.x - boxSize
-                                        val r = posScreen.x + boxSize
-                                        val t = posScreen.y - boxSize
-                                        val b = posScreen.y + boxSize
-
-                                        drawLine(color, Offset(l, t), Offset(l + corner, t), sWidth)
-                                        drawLine(color, Offset(l, t), Offset(l, t + corner), sWidth)
-                                        drawLine(color, Offset(r, t), Offset(r - corner, t), sWidth)
-                                        drawLine(color, Offset(r, t), Offset(r, t + corner), sWidth)
-                                        drawLine(color, Offset(l, b), Offset(l + corner, b), sWidth)
-                                        drawLine(color, Offset(l, b), Offset(l, b - corner), sWidth)
-                                        drawLine(color, Offset(r, b), Offset(r - corner, b), sWidth)
-                                        drawLine(color, Offset(r, b), Offset(r, b - corner), sWidth)
-                                    }
-
-                                    /* --- 目标标签 --- */
-                                    Column(
-                                        modifier = Modifier
-                                            .offset {
-                                                IntOffset(
-                                                    (posScreen.x + 52f).toInt(),
-                                                    (posScreen.y - 34f).toInt()
-                                                )
-                                            }
-                                            .graphicsLayer { alpha = currentAlpha }
-                                            .background(color)
-                                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                                            .animateContentSize(),
-                                        horizontalAlignment = Alignment.Start
-                                    ) {
-                                        Text(
-                                            "${target.id} TRACKING.",
-                                            color = Color.Black,
-                                            fontSize = 10.sp,
-                                            lineHeight = 10.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-
-                                        if (isLocked) {
-                                            Spacer(Modifier.height(2.dp))
-                                            Text(
-                                                "X:${posScreen.x.toInt()} Y:${posScreen.y.toInt()}",
-                                                color = Color.Black,
-                                                fontSize = 10.sp,
-                                                lineHeight = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                fontFamily = FontFamily.Monospace
-                                            )
-                                        }
-                                    }
-                                }
+                                val posScreen = logic2Screen(target.position)
+                                TrackingTargetItem(
+                                    target = target,
+                                    posScreen = posScreen,
+                                    isLocked = (validLockedTarget == target),
+                                    alpha = target.alpha.value
+                                )
                             }
                         }
                     }
-                    /********************  结束  ********************/
+                    //  结束
                 }
             } else {
 
@@ -1987,7 +1853,140 @@ fun ContentArea(modifier: Modifier = Modifier, pageIndex: Int) {
         }
     }
 }
+/* ---------- 1. 画中心十字线 + 坐标标签 ---------- */
+@Composable
+private fun CrossHair(
+    crosshairPos: Offset?,
+    squareSize: Float,
+    lineWidth: Dp = 1.dp,
+    lineColor: Color = Color.White,
+    validLockedTarget: TrackingTarget?    // 用你的类型名
+) {
+    crosshairPos?.let { pos ->
+        val strokeWidthPx = with(LocalDensity.current) { lineWidth.toPx() }
+        Canvas(Modifier.fillMaxSize()) {
+            val halfSize = squareSize / 2
 
+            // 外方框
+            drawRect(
+                color = lineColor,
+                topLeft = Offset(pos.x - halfSize, pos.y - halfSize),
+                size = Size(squareSize, squareSize),
+                style = Stroke(width = strokeWidthPx)
+            )
+
+            // 上下左右延伸线
+            drawLine(lineColor, Offset(pos.x, 0f), Offset(pos.x, pos.y - halfSize), strokeWidthPx)
+            drawLine(lineColor, Offset(pos.x, pos.y + halfSize), Offset(pos.x, size.height), strokeWidthPx)
+            drawLine(lineColor, Offset(0f, pos.y), Offset(pos.x - halfSize, pos.y), strokeWidthPx)
+            drawLine(lineColor, Offset(pos.x + halfSize, pos.y), Offset(size.width, pos.y), strokeWidthPx)
+        }
+
+        /* ----- 十字线坐标标签（吸附到目标时不显示） ----- */
+        if (validLockedTarget == null) {
+            CoordinateLabel(
+                text = "X:${pos.x.toInt()} Y:${pos.y.toInt()}",
+                offset = IntOffset((pos.x + 52f).toInt(), (pos.y - 34f).toInt())
+            )
+        }
+    }
+}
+
+/* ---------- 2. 画单个目标（十字 + 拐角框 + 标签） ---------- */
+@Composable
+private fun TrackingTargetItem(
+    target: TrackingTarget,                    // 你的目标类
+    posScreen: Offset,                         // 已转换好的屏幕坐标
+    isLocked: Boolean,
+    alpha: Float,
+    boxSize: Float = 30f,
+    corner: Float = 10f,
+    strokeWidth: Dp = 1.dp,
+    color: Color = Color.White
+) {
+    val strokeWidthPx = with(LocalDensity.current) { strokeWidth.toPx() }
+
+    Box(Modifier.fillMaxSize()) {
+
+        /* --- 十字 & 拐角框 --- */
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { this.alpha = alpha }
+        ) {
+            // 中心十字
+            drawLine(color,
+                start = Offset(posScreen.x - 8f, posScreen.y),
+                end   = Offset(posScreen.x + 8f, posScreen.y),
+                strokeWidthPx
+            )
+            drawLine(color,
+                start = Offset(posScreen.x, posScreen.y - 8f),
+                end   = Offset(posScreen.x, posScreen.y + 8f),
+                strokeWidthPx
+            )
+
+            // 四角
+            val l = posScreen.x - boxSize
+            val r = posScreen.x + boxSize
+            val t = posScreen.y - boxSize
+            val b = posScreen.y + boxSize
+
+            drawLine(color, Offset(l, t), Offset(l + corner, t), strokeWidthPx)
+            drawLine(color, Offset(l, t), Offset(l, t + corner), strokeWidthPx)
+            drawLine(color, Offset(r, t), Offset(r - corner, t), strokeWidthPx)
+            drawLine(color, Offset(r, t), Offset(r, t + corner), strokeWidthPx)
+            drawLine(color, Offset(l, b), Offset(l + corner, b), strokeWidthPx)
+            drawLine(color, Offset(l, b), Offset(l, b - corner), strokeWidthPx)
+            drawLine(color, Offset(r, b), Offset(r - corner, b), strokeWidthPx)
+            drawLine(color, Offset(r, b), Offset(r, b - corner), strokeWidthPx)
+        }
+
+        /* --- 文字标签 --- */
+        CoordinateLabel(
+            text = buildString {
+                append("${target.id} TRACKING.")
+                if (isLocked) append("\nX:${posScreen.x.toInt()} Y:${posScreen.y.toInt()}")
+            },
+            offset = IntOffset((posScreen.x + 52f).toInt(), (posScreen.y - 34f).toInt()),
+            alpha  = alpha,
+            boldSecondLine = isLocked
+        )
+    }
+}
+
+/* ---------- 3. 提取公共的标签 ---------- */
+@Composable
+private fun CoordinateLabel(
+    text: String,
+    offset: IntOffset,
+    alpha: Float = 1f,
+    boldSecondLine: Boolean = false
+) {
+    Column(
+        modifier = Modifier
+            .offset { offset }
+            .graphicsLayer { this.alpha = alpha }
+            .background(Color.White)
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+            .animateContentSize(),
+        horizontalAlignment = Alignment.Start
+    ) {
+        text.split('\n').forEachIndexed { index, line ->
+            Text(
+                line,
+                color = Color.Black,
+                fontSize = 10.sp,
+                lineHeight = 10.sp,
+                fontWeight = if (boldSecondLine && index > 0) FontWeight.Bold else FontWeight.ExtraBold,
+                fontFamily = FontFamily.Monospace
+            )
+            if (index < text.lines().size - 1) {
+                Spacer(Modifier.height(2.dp))
+            }
+        }
+    }
+}
 class TrackingTarget(
     val id: String,
     val position: Offset,
@@ -2019,16 +2018,16 @@ private fun DrawScope.drawCrossAndHollowSquare(
         // 左段
         drawLine(
             color = indicatorColor,
-            start = androidx.compose.ui.geometry.Offset(0f, py),
-            end = androidx.compose.ui.geometry.Offset(maxOf(0f, left), py),
+            start = Offset(0f, py),
+            end = Offset(maxOf(0f, left), py),
             strokeWidth = strokeWidth,
             cap = StrokeCap.Square
         )
         // 右段
         drawLine(
             color = indicatorColor,
-            start = androidx.compose.ui.geometry.Offset(minOf(canvasWidth, right), py),
-            end = androidx.compose.ui.geometry.Offset(canvasWidth, py),
+            start = Offset(minOf(canvasWidth, right), py),
+            end = Offset(canvasWidth, py),
             strokeWidth = strokeWidth,
             cap = StrokeCap.Square
         )
